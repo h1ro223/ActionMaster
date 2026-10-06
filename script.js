@@ -3037,7 +3037,9 @@
   const RS = {
     TIME: 100,                // ノーマルの制限時間
     SPEED: 128,               // ロケットの速さ（毎秒4マス）
-    RW: 50, RH: 28,           // ロケットの大きさ＝当たり判定（長さ約1.6マス・太さ約0.9マス）
+    RW: 44, RH: 24,           // ロケットの大きさ＝ミスの当たり判定（長さ約1.4マス・太さ約0.75マス）
+    STOMP_X: 8,               // 踏みの判定を左右に広げる量
+    STOMP_Y: 14,              // 踏みの判定：ロケットの上面からこの深さまでなら「上から踏んだ」扱い
     FIRST: 1.0,               // スタート（GO!）から最初の発射までの時間
     INTERVAL: 3.75,           // 発射の間隔（砲台ごとに数える）
     BOUNCE: 746,              // 踏んだときの跳ね返り：長押しで6マス、すぐ離すと約2.5マス
@@ -3166,13 +3168,23 @@
   }
   // プレイヤーとロケットの当たり判定（上から踏めば得点、それ以外はミス）
   function rocketHazards(p, l, rgt, t, b) {
+    const prevBottom = p.y - p.vy * STEP;
+    // 先に「踏み」を調べる（見た目より少し広い範囲で判定）
+    if (p.vy > 0) {
+      for (const r of rockets) {
+        if (r.dead) continue;
+        const rl = r.x - RS.RW / 2 - RS.STOMP_X, rr = r.x + RS.RW / 2 + RS.STOMP_X, rt = r.y - RS.RH / 2;
+        if (rgt > rl && l < rr && b > rt - 2 && b < rt + RS.STOMP_Y && prevBottom <= rt + RS.STOMP_Y) {
+          stompRocket(r);
+          return false;
+        }
+      }
+    }
+    // 踏めなかったときに体が当たったらミス
     for (const r of rockets) {
       if (r.dead) continue;
       const rl = r.x - RS.RW / 2, rr = r.x + RS.RW / 2, rt = r.y - RS.RH / 2, rb = r.y + RS.RH / 2;
-      if (!(rgt > rl && l < rr && b > rt && t < rb)) continue;
-      const prevBottom = p.y - p.vy * STEP;
-      if (p.vy > 0 && prevBottom <= rt + 10) { stompRocket(r); return false; }
-      return true; // ミス
+      if (rgt > rl && l < rr && b > rt && t < rb) return true;
     }
     return false;
   }
