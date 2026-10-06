@@ -187,24 +187,25 @@
 
   // ROCKET STREAK：オーロラの雪山（中央は穴）。砲台は地形と同じく足場になる
   STAGES[3] = {
-    cols: 34,
-    safe: [9, 12],          // スタート位置（安全ブロックはなし）
+    cols: 35,               // 左右対称にするため35列
+    safe: [7, 12],          // スタート位置：左上の砲台の2マス左（安全ブロックはなし）
     openBottom: true,       // 画面の下は穴
     build() {
-      fillTiles(0, 12, 9, 18, '#');   // 左の高い足場
-      fillTiles(10, 15, 12, 18, '#'); // 左の段
-      fillTiles(13, 17, 15, 18, '#'); // 左の低い段
-      fillTiles(18, 17, 20, 18, '#'); // 右の低い段
-      fillTiles(21, 16, 23, 18, '#'); // 右の段（左より少し低い）
-      fillTiles(24, 12, 30, 18, '#'); // 右の高い足場
-      fillTiles(31, 13, 33, 18, '#'); // 右奥の下り
-      for (const cn of STAGES[3].cannons) fillTiles(cn.c, cn.r, cn.c, cn.r + 1, 'K'); // 砲台
+      fillTiles(0, 12, 10, 18, '#');  // 左の高い足場（砲台の右に空き1マス）
+      fillTiles(11, 15, 13, 18, '#'); // 左の段（砲台の右に空き2マス）
+      fillTiles(14, 17, 15, 18, '#'); // 左の低い段（空き2マス）
+      // 16〜18列目は穴（3マス）
+      fillTiles(19, 17, 20, 18, '#'); // 右の低い段（空き2マス）
+      fillTiles(21, 16, 23, 18, '#'); // 右の段（砲台の左に空き2マス・左より少し低い）
+      fillTiles(24, 12, 30, 18, '#'); // 右の高い足場（砲台の左に空き1マス）
+      fillTiles(31, 13, 34, 18, '#'); // 右奥（1段低い）
+      for (const cn of STAGES[3].cannons) fillTiles(cn.c, cn.r, cn.c, cn.r + 1, 'K'); // 砲台（2マスの高さ）
     },
     cannons: [
-      { c: 7, r: 10, dir: 1, delay: 0.7 },   // 左の高い足場
-      { c: 10, r: 13, dir: 1, delay: 1.7 },  // 左の段
-      { c: 23, r: 14, dir: -1, delay: 2.4 }, // 右の段
-      { c: 26, r: 10, dir: -1, delay: 1.2 }  // 右の高い足場
+      { c: 9, r: 10, dir: 1 },   // 左上
+      { c: 11, r: 13, dir: 1 },  // 左下
+      { c: 23, r: 14, dir: -1 }, // 右下
+      { c: 25, r: 10, dir: -1 }  // 右上
     ],
     imps: [],
     torches: [],
@@ -844,8 +845,8 @@
   }
 
   function onLand(p, vy) {
-    // ROCKET STREAK：一度地面を離れたあとに着地したら終了
-    if (isRocketMode() && state === 'play' && rsArmed) finishRocket('land');
+    // ROCKET STREAK：1回でも踏んだあとに着地したら終了（踏む前は何回着地してもOK）
+    if (isRocketMode() && state === 'play' && rsStarted) finishRocket('land');
     p.spinT = 0; p.spinJump = false; p.sliding = false;
     p.spinCool = 0; p.hoverT = 0; p.recoverT = 0; p.spinAnim = 0;
     if (p.gp === 2) {
@@ -3014,11 +3015,10 @@
   /* ===== ROCKET STREAK：飛んでくるロケットを着地せずに踏み続けて1UPを集める ===== */
   const RS = {
     TIME: 100,                // ノーマルの制限時間
-    SPEED: 140,               // ロケットの速さ
-    RW: 40, RH: 20,           // ロケットの当たり判定
-    INT_MIN: 1.5, INT_MAX: 3.3, // 砲台の発射間隔
-    BOUNCE: 560,              // 踏んだときの跳ね返り（ボタンを押していないとき）
-    BOUNCE_HI: 640,           // ジャンプボタンを押しているとき
+    SPEED: 160,               // ロケットの速さ（毎秒5マス）
+    RW: 50, RH: 28,           // ロケットの大きさ＝当たり判定（長さ約1.6マス・太さ約0.9マス）
+    INTERVAL: 3.75,           // 4つの砲台が同時に撃つ間隔（最初はスタートと同時）
+    BOUNCE: 746,              // 踏んだときの跳ね返り：長押しで6マス、すぐ離すと約2.5マス
     POINTS: [100, 200, 400, 800, 1000, 2000, 4000, 8000] // 9回目からは踏むたびに1UP
   };
   // ノーマルのメダル（1UPの数）
@@ -3033,24 +3033,35 @@
   let rsChain = 0;   // 連続で踏んだ回数（着地すると終了なので、1回のプレイ中ずっと続く）
   let rsStomps = 0;
   let ups = 0;
-  let rsArmed = false; // 一度でも地面を離れたか（離れたあとに着地したら終了）
+  let rsStarted = false; // 1回でも踏んだか（踏んだあとは着地で終了）
+  let rsFireT = 0;       // 次に発射するまでの時間
   let rsEnd = '';      // 'time' / 'land' / 'miss'
   let rocketSeq = 0;
 
   function resetRocketWorld() {
     rockets = [];
-    cannons = (curStage.cannons || []).map((cn) => ({ ...cn, t: cn.delay, flash: 0 }));
+    cannons = (curStage.cannons || []).map((cn) => ({ ...cn, flash: 0 }));
     rsChain = 0;
     rsStomps = 0;
     ups = 0;
-    rsArmed = false;
+    rsStarted = false;
+    rsFireT = 0;
     rsEnd = '';
   }
+  // 砲台の上に乗っている、または横にくっついているか
+  function playerTouchesCannon(cn) {
+    const p = player;
+    if (p.dead) return false;
+    const hw = PH.W / 2, l = p.x - hw, r = p.x + hw, t = p.y - p.h, b = p.y;
+    const x0 = cn.c * TILE, x1 = x0 + TILE, y0 = cn.r * TILE, y1 = y0 + TILE * 2;
+    const onTop = Math.abs(b - y0) <= 3 && r > x0 && l < x1;
+    const side = t < y1 && b > y0 && (Math.abs(r - x0) <= 3 || Math.abs(l - x1) <= 3);
+    return onTop || side;
+  }
   function fireRocket(cn) {
-    const x = cn.dir > 0 ? (cn.c + 1) * TILE + 14 : cn.c * TILE - 14;
-    const y = cn.r * TILE + 12;
-    // 前のロケットがまだ砲台の前にいたら撃たない
-    for (const r of rockets) if (!r.dead && r.dir === cn.dir && Math.abs(r.x - x) < RS.RW * 1.6 && Math.abs(r.y - y) < RS.RH) return false;
+    if (playerTouchesCannon(cn)) return false; // 乗っている・くっついているときは撃たない
+    const x = cn.dir > 0 ? (cn.c + 1) * TILE + RS.RW / 2 - 6 : cn.c * TILE - RS.RW / 2 + 6;
+    const y = cn.r * TILE + RS.RH / 2 - 2; // 同じ高さの足場に立っているプレイヤーの頭にはギリギリ当たらない高さ
     rockets.push({ id: ++rocketSeq, x, y, dir: cn.dir, dead: false, vy: 0, rot: 0, shiftT: 0, shiftV: 0, bumpCD: 0, trailT: 0 });
     cn.flash = 0.18;
     sfx('launch');
@@ -3059,20 +3070,13 @@
     }
     return true;
   }
-  function explodeRocket(r) {
-    r.gone = true;
-    puff(r.x, r.y, 6);
-    sparks(r.x, r.y, 10, '#ffb43a', 160);
-    sfx('fizz');
-  }
   function updateRocketWorld(dt, canFire) {
     if (canFire) {
-      for (const cn of cannons) {
-        cn.t -= dt;
-        if (cn.t <= 0) {
-          fireRocket(cn);
-          cn.t = rand(RS.INT_MIN, RS.INT_MAX);
-        }
+      // 4つの砲台が同時に、一定の間隔で撃つ（前のロケットが残っていても撃つ）
+      rsFireT -= dt;
+      if (rsFireT <= 0) {
+        rsFireT += RS.INTERVAL;
+        for (const cn of cannons) fireRocket(cn);
       }
     }
     for (const cn of cannons) cn.flash = Math.max(0, cn.flash - dt);
@@ -3092,12 +3096,10 @@
       r.trailT -= dt;
       if (r.trailT <= 0) {
         r.trailT = 0.04;
-        addP({ kind: 'spark', x: r.x - r.dir * 26, y: r.y + rand(-3, 3), vx: -r.dir * rand(40, 90), vy: rand(-15, 15), drag: 2, life: rand(0.18, 0.3), size: rand(2, 3.5), color: Math.random() < 0.5 ? '#ffb43a' : '#ff6a2a' });
+        addP({ kind: 'spark', x: r.x - r.dir * (RS.RW / 2 + 4), y: r.y + rand(-3, 3), vx: -r.dir * rand(40, 90), vy: rand(-15, 15), drag: 2, life: rand(0.18, 0.3), size: rand(2, 3.5), color: Math.random() < 0.5 ? '#ffb43a' : '#ff6a2a' });
       }
-      // 地形にぶつかったら爆発、画面の外に出たら消える
-      const fc = Math.floor((r.x + r.dir * RS.RW / 2) / TILE);
-      if (r.y > 0 && r.y < LH && solidAt(fc, Math.floor(r.y / TILE))) explodeRocket(r);
-      else if (r.x < -80 || r.x > LW + 80) r.gone = true;
+      // 壁や足場はすり抜ける。画面の外に出たら消える
+      if (r.x < -80 || r.x > LW + 80) r.gone = true;
     }
     // ロケット同士が正面からぶつかったら、火花を出して上下にずれる
     for (let i = 0; i < rockets.length; i++) {
@@ -3142,7 +3144,8 @@
     r.dead = true;
     r.vy = -80;
     p.y = r.y - RS.RH / 2;
-    p.vy = -(input.jump ? RS.BOUNCE_HI : RS.BOUNCE);
+    p.vy = -RS.BOUNCE;
+    rsStarted = true;
     p.jumpHeld = input.jump;
     p.onGround = false;
     p.gp = 0; p.hoverT = 0; p.recoverT = 0; p.spinCool = 0; p.spinJump = false; p.spinT = 0;
@@ -3154,7 +3157,7 @@
       addP({ kind: 'star', x: r.x, y: r.y - 6, vx: rand(-100, 100), vy: rand(-160, -40), g: 400, life: 0.4, size: 4, rot: rand(0, TAU), vr: 8, color: '#fff3a8' });
     }
     if (rsChain <= RS.POINTS.length) {
-      addP({ kind: 'text', text: String(RS.POINTS[rsChain - 1]), x: r.x, y: r.y - 18, vy: -50, life: 0.8, color: '#ffffff' });
+      addP({ kind: 'text', text: String(RS.POINTS[rsChain - 1]), x: r.x, y: r.y - 18, vy: -50, life: 0.8, color: '#ffa53a' });
       sfx('stomp');
     } else {
       ups++;
@@ -3231,6 +3234,7 @@
 
   // ---- 描画 ----
   function drawRocket(g, r) {
+    const hl = RS.RW / 2, hh = RS.RH / 2; // 半分の長さ・太さ（当たり判定と同じ）
     g.save();
     g.translate(r.x, r.y);
     if (r.dead) g.rotate(r.rot);
@@ -3240,41 +3244,58 @@
       const fl = 1 + Math.sin(performance.now() * 0.05 + r.id) * 0.15;
       g.save();
       g.globalCompositeOperation = 'lighter';
-      const fg = g.createRadialGradient(-26, 0, 0, -26, 0, 16 * fl);
+      const fg = g.createRadialGradient(-hl - 6, 0, 0, -hl - 6, 0, 18 * fl);
       fg.addColorStop(0, 'rgba(255,240,180,.95)');
       fg.addColorStop(0.4, 'rgba(255,150,50,.75)');
       fg.addColorStop(1, 'rgba(255,80,20,0)');
       g.fillStyle = fg;
-      ell(g, -28, 0, 16 * fl, 7);
+      ell(g, -hl - 8, 0, 18 * fl, hh * 0.55);
       g.restore();
     }
-    // 尾翼
-    g.fillStyle = '#d6332c';
-    g.beginPath(); g.moveTo(-17, -8); g.lineTo(-25, -16); g.lineTo(-9, -8); g.closePath(); g.fill();
-    g.beginPath(); g.moveTo(-17, 8); g.lineTo(-25, 16); g.lineTo(-9, 8); g.closePath(); g.fill();
-    // 胴体
-    const bg = g.createLinearGradient(0, -10, 0, 10);
+    // 胴体（ずんぐりした弾丸型）
+    const bg = g.createLinearGradient(0, -hh, 0, hh);
     bg.addColorStop(0, '#ffffff');
-    bg.addColorStop(0.55, '#d4dcec');
-    bg.addColorStop(1, '#8e9ab4');
+    bg.addColorStop(0.5, '#d4dcec');
+    bg.addColorStop(1, '#7f8ca8');
     g.fillStyle = bg;
-    rrect(g, -20, -10, 32, 20, 8); g.fill();
-    // 赤いライン
-    g.fillStyle = '#e2453c';
-    g.fillRect(-11, -10, 4, 20);
-    // 先端
-    const ng = g.createLinearGradient(0, -10, 0, 10);
+    g.beginPath();
+    g.moveTo(-hl, -hh + 3);
+    g.quadraticCurveTo(-hl, -hh, -hl + 3, -hh);
+    g.lineTo(hl * 0.25, -hh);
+    g.quadraticCurveTo(hl, -hh, hl, 0);
+    g.quadraticCurveTo(hl, hh, hl * 0.25, hh);
+    g.lineTo(-hl + 3, hh);
+    g.quadraticCurveTo(-hl, hh, -hl, hh - 3);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = 'rgba(20,25,45,.55)';
+    g.lineWidth = 1.2;
+    g.stroke();
+    // 先端の赤いキャップ
+    g.save();
+    g.clip();
+    const ng = g.createLinearGradient(0, -hh, 0, hh);
     ng.addColorStop(0, '#ff7a6a');
     ng.addColorStop(1, '#b51f24');
     g.fillStyle = ng;
-    g.beginPath(); g.moveTo(10, -10); g.quadraticCurveTo(26, -7, 26, 0); g.quadraticCurveTo(26, 7, 10, 10); g.closePath(); g.fill();
+    g.fillRect(hl * 0.42, -hh, hl, hh * 2);
+    // 後ろの帯
+    g.fillStyle = '#e2453c';
+    g.fillRect(-hl + 5, -hh, 5, hh * 2);
+    g.fillStyle = 'rgba(255,255,255,.35)';
+    g.fillRect(-hl, -hh + 3, hl * 2, 3);
+    g.restore();
+    // 小さな尾翼
+    g.fillStyle = '#c42a24';
+    g.beginPath(); g.moveTo(-hl + 2, -hh + 2); g.lineTo(-hl - 5, -hh - 5); g.lineTo(-hl + 10, -hh + 1); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(-hl + 2, hh - 2); g.lineTo(-hl - 5, hh + 5); g.lineTo(-hl + 10, hh - 1); g.closePath(); g.fill();
     // 丸窓
     g.fillStyle = '#2b3a5c';
-    circ(g, 2, -1, 5.2);
+    circ(g, 1, -1, 6.4);
     g.fillStyle = '#7cc8ff';
-    circ(g, 2, -1, 4);
+    circ(g, 1, -1, 5);
     g.fillStyle = 'rgba(255,255,255,.85)';
-    circ(g, 0.8, -2.4, 1.3);
+    circ(g, -0.6, -2.8, 1.6);
     g.restore();
   }
   function drawRockets(g) {
@@ -4277,7 +4298,6 @@
         if (mode === 'rs-normal' && elapsed >= RS.TIME) { elapsed = RS.TIME; finishRocket('time'); break; }
         if (isRocketMode()) updateRocketWorld(dt, true);
         updatePlayer(dt);
-        if (isRocketMode() && state === 'play' && !player.onGround) rsArmed = true;
         if (state !== 'play') { updateParticles(dt); break; } // このステップでミス・終了した
         updateImps(dt);
         updateFireballs(dt);
