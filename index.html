@@ -96,6 +96,7 @@
           </button>
         </div>
         <div class="sub-btns">
+          <button id="btn-online" class="btn sub small online" type="button">🌐 オンライン対戦</button>
           <button id="btn-help" class="btn sub small" type="button">？ 操作方法</button>
           <button id="btn-settings" class="btn sub small" type="button">⚙ 設定</button>
         </div>
@@ -106,7 +107,7 @@
     <!-- ===== ポーズ ===== -->
     <div id="ov-pause" class="overlay">
       <div class="card scroll small">
-        <h2 class="ov-head">ポーズ中</h2>
+        <h2 id="pause-head" class="ov-head">ポーズ中</h2>
         <div class="btn-col">
           <button id="btn-resume" class="btn" type="button">つづける</button>
           <button id="btn-p-retry" class="btn sub" type="button">最初からやり直す</button>
@@ -114,6 +115,45 @@
           <button id="btn-p-settings" class="btn sub" type="button">⚙ 設定</button>
           <button id="btn-p-title" class="btn sub" type="button">タイトルへ戻る</button>
         </div>
+      </div>
+    </div>
+
+    <!-- ===== オンライン対戦 ===== -->
+    <div id="ov-online" class="overlay">
+      <div class="card scroll small">
+        <h2 class="ov-head">オンライン対戦</h2>
+        <p class="set-note">招待リンクか数字4桁の部屋コードで友達を呼んで、エンドレスでだれが一番長く生き残れるか勝負！ほかの人は半透明のゴーストで表示されます（当たり判定なし）。</p>
+
+        <div id="on-menu">
+          <label class="on-field" for="on-name">
+            <span>名前</span>
+            <input id="on-name" type="text" maxlength="10" autocomplete="off" spellcheck="false" placeholder="プレイヤー">
+          </label>
+          <div class="btn-col">
+            <button id="btn-on-create" class="btn" type="button">部屋を作る</button>
+            <div class="on-join">
+              <input id="on-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" spellcheck="false" placeholder="数字4桁" aria-label="部屋コード（数字4桁）">
+              <button id="btn-on-join" class="btn sub" type="button">部屋に入る</button>
+            </div>
+            <button id="btn-on-back" class="btn sub" type="button">戻る</button>
+          </div>
+        </div>
+
+        <div id="on-room" hidden>
+          <p class="on-code-label">部屋コード</p>
+          <p id="on-code-show" class="on-code-show">----</p>
+          <p id="on-stage" class="on-stage"></p>
+          <ul id="on-players" class="on-players"></ul>
+          <p id="on-wait" class="on-wait" hidden>ホストのスタートを待っています…</p>
+          <div class="btn-col">
+            <button id="btn-on-invite" class="btn sub" type="button">📨 友達を招待（リンクを送る）</button>
+            <button id="btn-on-start" class="btn" type="button">スタート</button>
+            <button id="btn-on-leave" class="btn sub" type="button">部屋を出る</button>
+          </div>
+        </div>
+
+        <p id="on-status" class="on-status"></p>
+        <p class="on-note">※接続にはPeerJSの無料サーバーを使います。つながらないときは時間をおいて試してください。つながった相手同士にはIPアドレスが伝わります。</p>
       </div>
     </div>
 
@@ -234,6 +274,7 @@
         <p id="res-new" class="res-new" hidden>ベスト記録更新！</p>
         <p id="res-unlock" class="res-unlock" hidden>🔓 ハードモード解放！</p>
         <p id="res-msg" class="res-msg"></p>
+        <ol id="res-rank" class="res-rank" hidden></ol>
         <p class="best">ベスト記録：<span id="res-best">--</span></p>
         <div class="btn-col">
           <button id="btn-retry" class="btn" type="button">もう一度</button>

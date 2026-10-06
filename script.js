@@ -224,7 +224,8 @@
     stage2: false,                               // ステージ2解放済み
     stage: 1,                                    // 選択中のステージ
     muted: false, lastMode: 'normal', ctl: defaultCtl(),
-    padSwap: false                               // コントローラーのA/B・X/Y入れ替え
+    padSwap: false,                              // コントローラーのA/B・X/Y入れ替え
+    netName: ''                                  // オンライン対戦の名前
   };
   const okNum = (v) => typeof v === 'number' && isFinite(v);
   function readBests(src, dst) {
@@ -248,6 +249,7 @@
     if (save.stage2 && s.stage === 2) save.stage = 2;
     if (typeof s.muted === 'boolean') save.muted = s.muted;
     if (typeof s.padSwap === 'boolean') save.padSwap = s.padSwap;
+    if (typeof s.netName === 'string') save.netName = s.netName.replace(/[\u0000-\u001f<>]/g, '').slice(0, 10);
     if (s.lastMode === 'normal' || s.lastMode === 'endless' || s.lastMode === 'hard') save.lastMode = s.lastMode;
     if (s.ctl && typeof s.ctl === 'object') {
       if (okNum(s.ctl.pad)) save.ctl.pad = clamp(Math.round(s.ctl.pad), 60, 150);
@@ -870,6 +872,7 @@
     for (let i = 0; i < 6; i++) {
       addP({ kind: 'star', x: p.x, y: p.y - 22, vx: rand(-160, 160), vy: rand(-220, -40), g: 400, life: 0.6, size: 5, rot: rand(0, TAU), vr: 9, color: '#ffe9a8' });
     }
+    if (mode === 'online') { netReportDeath(elapsed); return; }
     if (mode === 'hard') hardLv = hardLevel();
     const rec = save.bests[stageNo];
     lastNew = elapsed > rec[mode] + 1e-6;
@@ -922,7 +925,7 @@
     }
     m.face = player.x < m.x ? -1 : 1;
 
-    if (state !== 'play') {
+    if (!impsActive()) {
       // 待機中・クリア後はその場で跳ねるだけ
       if (m.onGround && Math.random() < dt * (state === 'clear' ? 2.2 : 0.5)) {
         m.vy = -rand(200, 300); m.onGround = false;
@@ -959,13 +962,18 @@
 
   function throwFireball(m) {
     const hx = m.x + m.face * 12, hy = m.y - 34;
-    fireballs.push({
+    const f = {
       x: hx, y: hy,
       vx: m.face * rand(175, 240) * diffParams().spd,
       vy: -rand(110, 330),
       r: FB.R, rot: 0, life: FB.LIFE, trailT: 0,
       bounce: rand(FB.BOUNCE_MIN, FB.BOUNCE_MAX)
-    });
+    };
+    fireballs.push(f);
+    // オンラインのホストは、同じ火の玉を全員に配る
+    if (mode === 'online' && net.role === 'host') {
+      sendAll({ t: 'fb', x: +f.x.toFixed(1), y: +f.y.toFixed(1), vx: +f.vx.toFixed(1), vy: +f.vy.toFixed(1), b: +f.bounce.toFixed(1), at: +elapsed.toFixed(3) });
+    }
     m.throwAnim = 0.2;
     sfx('throw');
     sparks(hx, hy, 6, '#ffcf5a', 120);
@@ -1587,8 +1595,8 @@
   }
 
   // ---- 主人公（ネコ耳フードの冒険者）----
-  function drawPlayer(g, t) {
-    const p = player;
+  function drawPlayer(g, t, pp) {
+    const p = pp || player;
     if (p.dead && p.y > LH + 80) return;
     let pose = 'stand';
     if (p.dead) pose = 'dead';
@@ -1788,7 +1796,7 @@
 
     const air = !m.onGround;
     const bob = air ? -1 : Math.sin(m.anim * 7) * 0.8;
-    const aiming = m.alive && m.state === 'aim' && state === 'play';
+    const aiming = m.alive && m.state === 'aim' && (state === 'play' || (mode === 'online' && (state === 'dead' || state === 'spectate')));
     const throwing = m.throwAnim > 0;
     const step = m.alive && m.state === 'walk' && !air && state === 'play' ? Math.sin(m.anim * 14) * 2 : 0;
 
@@ -2025,7 +2033,7 @@
   }
   const bannerEl = $('banner');
   const soundBtn = $('btn-sound');
-  const overlays = [$('ov-title'), $('ov-pause'), $('ov-result'), $('ov-settings'), $('ov-help')];
+  const overlays = [$('ov-title'), $('ov-pause'), $('ov-result'), $('ov-settings'), $('ov-help'), $('ov-online')];
   let overlayId = 'ov-title';
 
   function showOverlay(id) {
@@ -2098,6 +2106,9 @@
       case 'ov-result': return $('btn-retry');
       case 'ov-settings': return $('set-pad');
       case 'ov-help': return document.querySelector('#ov-help .tab.on') || $('btn-help-back');
+      case 'ov-online':
+        if ($('on-room').hidden) return $('btn-on-create');
+        return net.role === 'host' ? $('btn-on-start') : $('btn-on-leave');
     }
     return null;
   }
@@ -2132,7 +2143,8 @@
     if (overlayId === 'ov-settings') closeSettings();
     else if (overlayId === 'ov-help') closeHelp();
     else if (overlayId === 'ov-pause') togglePause(false);
-    else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) showTitle();
+    else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) toTitleAction();
+    else if (overlayId === 'ov-online' && $('on-room').hidden) closeOnlineMenu();
   }
   function menuGamepad(gp) {
     const aEdge = gp.a && !gpMenu.a;
@@ -2226,6 +2238,7 @@
     document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('last', b.dataset.mode === save.lastMode));
   }
   function updateModeHud() {
+    remainBox.classList.toggle('is-online', mode === 'online');
     remainBox.classList.toggle('is-endless', mode === 'endless');
     remainBox.classList.toggle('is-hard', mode === 'hard');
     lastRemain = '';
@@ -2248,9 +2261,9 @@
 
   function startGame(m) {
     if (logoBusy) return; // ステージ2解放の演出中は開始しない
-    if (m === 'normal' || m === 'endless' || m === 'hard') mode = m;
+    if (m === 'normal' || m === 'endless' || m === 'hard' || m === 'online') mode = m;
     if (mode === 'hard' && !save.hardUnlocked) mode = 'normal';
-    if (save.lastMode !== mode) { save.lastMode = mode; persist(); }
+    if (mode !== 'online' && save.lastMode !== mode) { save.lastMode = mode; persist(); }
     updateModeHud();
     AudioSys.init();
     paused = false;
@@ -2308,6 +2321,10 @@
   }
 
   function showResult(cleared) {
+    $('res-rank').hidden = true;
+    $('res-best').parentElement.hidden = false;
+    $('btn-retry').textContent = 'もう一度';
+    $('btn-r-title').textContent = 'タイトルへ戻る';
     resultShown = true;
     resultAt = performance.now();
     const t = cleared ? TIME_LIMIT : elapsed;
@@ -2333,6 +2350,20 @@
   }
 
   function togglePause(force) {
+    if (mode === 'online') {
+      // オンラインはゲームを止められないので、メニューを開くだけ
+      if (!['ready', 'play', 'dead', 'spectate'].includes(state)) return;
+      if (editMode || overlayId === 'ov-settings' || overlayId === 'ov-help') return;
+      const open = typeof force === 'boolean' ? force : overlayId !== 'ov-pause';
+      $('btn-p-retry').hidden = true;
+      $('pause-head').textContent = 'メニュー（ゲームは続いています）';
+      $('btn-p-title').textContent = '退出してタイトルへ';
+      showOverlay(open ? 'ov-pause' : null);
+      return;
+    }
+    $('btn-p-retry').hidden = false;
+    $('pause-head').textContent = 'ポーズ中';
+    $('btn-p-title').textContent = 'タイトルへ戻る';
     if (state !== 'play' && state !== 'ready') return;
     if (editMode || overlayId === 'ov-settings' || overlayId === 'ov-help') return; // 設定・操作方法の表示中は切り替えない
     const next = typeof force === 'boolean' ? force : !paused;
@@ -2344,7 +2375,7 @@
 
   function onMenuConfirm() {
     if (overlayId === 'ov-title') startGame(save.lastMode === 'hard' && !save.hardUnlocked ? 'normal' : save.lastMode);
-    else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) startGame();
+    else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) retryAction();
     else if (overlayId === 'ov-pause') togglePause(false);
   }
 
@@ -2352,7 +2383,8 @@
     if (editMode) { endEdit(); return; }
     if (overlayId === 'ov-settings') { closeSettings(); return; }
     if (overlayId === 'ov-help') { closeHelp(); return; }
-    if (state === 'play' || state === 'ready') togglePause();
+    if (overlayId === 'ov-online') return;
+    if (state === 'play' || state === 'ready' || (mode === 'online' && (state === 'dead' || state === 'spectate'))) togglePause();
     else onMenuConfirm();
   }
 
@@ -2382,16 +2414,29 @@
   $('btn-p-settings').addEventListener('click', () => openSettings());
   $('btn-help').addEventListener('click', () => openHelp());
   $('btn-p-help').addEventListener('click', () => openHelp());
-  $('btn-retry').addEventListener('click', () => { AudioSys.init(); startGame(); });
-  $('btn-r-title').addEventListener('click', showTitle);
+  function retryAction() {
+    if (mode === 'online') backToRoom();
+    else startGame();
+  }
+  function toTitleAction() {
+    if (mode === 'online') leaveOnline(true);
+    else showTitle();
+  }
+  $('btn-retry').addEventListener('click', () => { AudioSys.init(); retryAction(); });
+  $('btn-r-title').addEventListener('click', toTitleAction);
   $('btn-resume').addEventListener('click', () => togglePause(false));
   $('btn-p-retry').addEventListener('click', () => startGame());
-  $('btn-p-title').addEventListener('click', showTitle);
+  $('btn-p-title').addEventListener('click', toTitleAction);
   $('btn-pause').addEventListener('click', () => togglePause());
   soundBtn.addEventListener('click', toggleMute);
 
   // キーボード
   window.addEventListener('keydown', (e) => {
+    // 名前・部屋コードの入力中はゲームの操作をしない
+    if (e.target instanceof Element && e.target.closest('input, textarea')) {
+      if (e.key === 'Enter' && e.target.id === 'on-code') { e.preventDefault(); joinRoom(); }
+      return;
+    }
     AudioSys.init();
     const k = KEYMAP[e.code];
     if (k) {
@@ -2758,6 +2803,7 @@
     save.stage = 1;
     save.muted = false;
     save.padSwap = false;
+    save.netName = '';
     save.lastMode = 'normal';
     save.ctl = defaultCtl();
     mode = 'normal';
@@ -2837,16 +2883,654 @@
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
     const t = e.target instanceof Element ? e.target : null;
-    if (now - lastTouchEnd <= 320 && !(t && t.closest('button:not(.cbtn), a, .scroll'))) e.preventDefault();
+    if (now - lastTouchEnd <= 320 && !(t && t.closest('button:not(.cbtn), a, .scroll, input'))) e.preventDefault();
     lastTouchEnd = now;
   }, { passive: false });
   document.addEventListener('contextmenu', (e) => e.preventDefault());
-  document.addEventListener('selectstart', (e) => e.preventDefault());
+  const inField = (e) => e.target instanceof Element && !!e.target.closest('input, textarea');
+  document.addEventListener('selectstart', (e) => { if (!inField(e)) e.preventDefault(); });
 
   // タブ切り替えで自動ポーズ
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && (state === 'play' || state === 'ready') && !paused) togglePause(true);
   });
+
+  /* ===== オンライン対戦（部屋コード方式・ほかの人はゴースト表示） ===== */
+  const NET = {
+    MAX: 4,               // 最大人数
+    SEND: 0.05,           // 状態を送る間隔（秒）
+    PREFIX: 'blazedodge-h1ro-',
+    LIB: 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js'
+  };
+  const GHOST_COLORS = ['#ffd84a', '#7cf0e0', '#ff8ad8', '#9fd0ff'];
+  const net = {
+    role: null,         // 'host' / 'client' / null
+    peer: null,
+    conns: new Map(),   // ホスト：相手のID → 接続
+    hostConn: null,     // 参加者：ホストへの接続
+    code: '',
+    myId: '',
+    players: [],        // [{ id, name }]（先頭がホスト。ホストが配る）
+    stage: 1,
+    inGame: false,
+    ended: false,
+    alive: new Map(),   // ホスト：ID → { name, time, left }
+    ghosts: new Map(),  // ID → ゴーストの状態
+    aliveCount: 0,
+    sendT: 0,
+    pendingRank: null,
+    myTime: 0,
+    busy: false
+  };
+  let peerLibPromise = null;
+  function loadPeerLib() {
+    if (window.Peer) return Promise.resolve();
+    if (peerLibPromise) return peerLibPromise;
+    peerLibPromise = new Promise((resolve, reject) => {
+      const sc = document.createElement('script');
+      sc.src = NET.LIB;
+      sc.async = true;
+      sc.onload = () => (window.Peer ? resolve() : reject(new Error('Peer not found')));
+      sc.onerror = () => { peerLibPromise = null; reject(new Error('load failed')); };
+      document.head.appendChild(sc);
+    });
+    return peerLibPromise;
+  }
+  // 部屋コードは数字4桁（スマホで数字キーボードが出て打ちやすい）
+  const makeCode = () => String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+  // 全角数字も半角にして、数字以外を取り除く
+  const cleanCode = (v) => String(v || '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '').slice(0, 4);
+  const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 10) || 'プレイヤー';
+  const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : (d || 0));
+  function safeSend(conn, msg) {
+    try { if (conn && conn.open) conn.send(msg); } catch (e) { /* 送信失敗は無視 */ }
+  }
+  function sendAll(msg) {
+    for (const c of net.conns.values()) safeSend(c, msg);
+  }
+  function netErrorText(type) {
+    switch (type) {
+      case 'peer-unavailable': return '部屋が見つかりません。コードを確認してね';
+      case 'network':
+      case 'socket-error':
+      case 'socket-closed':
+      case 'server-error': return 'サーバーにつながりませんでした。時間をおいて試してね';
+      case 'browser-incompatible': return 'このブラウザはオンライン対戦に対応していません';
+      default: return 'つながりませんでした' + (type ? `（${type}）` : '');
+    }
+  }
+
+  // ---- 画面 ----
+  function onStatus(msg, isErr) {
+    const el = $('on-status');
+    el.textContent = msg || '';
+    el.classList.toggle('err', !!isErr);
+    fitOverlay();
+  }
+  function showOnlinePane(room) {
+    $('on-menu').hidden = room;
+    $('on-room').hidden = !room;
+    fitOverlay();
+  }
+  function setOnlineButtons() {
+    $('btn-on-create').disabled = net.busy;
+    $('btn-on-join').disabled = net.busy;
+  }
+  function renderRoom() {
+    $('on-code-show').textContent = net.code || '----';
+    $('on-stage').textContent = 'ステージ：' + (net.stage === 2 ? 'BLAZE DODGE 2' : 'BLAZE DODGE 🔥');
+    const ul = $('on-players');
+    ul.textContent = '';
+    for (let i = 0; i < NET.MAX; i++) {
+      const p = net.players[i];
+      const li = document.createElement('li');
+      const dot = document.createElement('span');
+      dot.className = 'on-dot';
+      if (p) {
+        dot.style.background = GHOST_COLORS[i];
+        li.appendChild(dot);
+        li.appendChild(document.createTextNode(p.name + (p.id === net.myId ? '（あなた）' : '') + (i === 0 ? ' 👑' : '')));
+      } else {
+        li.className = 'empty';
+        li.appendChild(dot);
+        li.appendChild(document.createTextNode('あき'));
+      }
+      ul.appendChild(li);
+    }
+    const sb = $('btn-on-start');
+    sb.hidden = net.role !== 'host';
+    sb.disabled = net.inGame;
+    $('on-wait').hidden = net.role !== 'client';
+    fitOverlay();
+  }
+  function myName() {
+    const n = cleanName($('on-name').value);
+    $('on-name').value = n;
+    if (n !== save.netName) { save.netName = n; persist(); }
+    return n;
+  }
+  function openOnline() {
+    if (overlayId !== 'ov-title') return;
+    $('on-name').value = save.netName || '';
+    setOnlineButtons();
+    showOverlay('ov-online');
+    showOnlinePane(!!net.role);
+    if (net.role) renderRoom();
+    onStatus('');
+  }
+  function closeOnlineMenu() {
+    if (net.role) { leaveOnline(true); return; }
+    showOverlay('ov-title');
+  }
+
+  // ---- 部屋を作る（ホスト） ----
+  async function createRoom() {
+    if (net.busy || net.role) return;
+    net.busy = true;
+    setOnlineButtons();
+    const name = myName();
+    onStatus('部屋を作っています…');
+    try { await loadPeerLib(); } catch (e) {
+      net.busy = false; setOnlineButtons();
+      onStatus('通信ライブラリを読み込めませんでした。通信環境を確認してね', true);
+      return;
+    }
+    let tries = 0;
+    const attempt = () => {
+      const code = makeCode();
+      let opened = false;
+      let peer;
+      try { peer = new window.Peer(NET.PREFIX + code, { debug: 0 }); } catch (e) {
+        net.busy = false; setOnlineButtons(); onStatus(netErrorText('browser-incompatible'), true); return;
+      }
+      peer.on('open', (id) => {
+        opened = true;
+        Object.assign(net, { role: 'host', peer, code, myId: id, busy: false, stage: stageNo, inGame: false, ended: false });
+        net.players = [{ id, name }];
+        mode = 'online';
+        updateModeHud();
+        setOnlineButtons();
+        showOnlinePane(true);
+        renderRoom();
+        onStatus('友達に部屋コードを伝えてね');
+      });
+      peer.on('connection', hostAccept);
+      peer.on('disconnected', () => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) { /* 再接続失敗 */ } });
+      peer.on('error', (err) => {
+        const type = err && err.type;
+        if (!opened && type === 'unavailable-id' && tries < 4) { // コードが使用中なら作り直す
+          tries++;
+          try { peer.destroy(); } catch (e) { /* 破棄失敗 */ }
+          attempt();
+          return;
+        }
+        if (!opened) {
+          try { peer.destroy(); } catch (e) { /* 破棄失敗 */ }
+          net.busy = false; setOnlineButtons();
+          onStatus(netErrorText(type), true);
+        }
+      });
+    };
+    attempt();
+  }
+  function hostAccept(conn) {
+    conn.on('open', () => {
+      if (net.role !== 'host') { conn.close(); return; }
+      if (net.inGame || net.players.length >= NET.MAX) {
+        safeSend(conn, { t: 'deny', why: net.inGame ? 'busy' : 'full' });
+        setTimeout(() => { try { conn.close(); } catch (e) { /* 切断失敗 */ } }, 400);
+        return;
+      }
+      net.conns.set(conn.peer, conn);
+    });
+    conn.on('data', (d) => hostData(conn, d));
+    conn.on('close', () => hostDrop(conn.peer));
+    conn.on('error', () => hostDrop(conn.peer));
+  }
+  function hostData(conn, d) {
+    if (!d || typeof d !== 'object' || !net.conns.has(conn.peer)) return;
+    switch (d.t) {
+      case 'hello':
+        if (!net.players.some((p) => p.id === conn.peer) && net.players.length < NET.MAX) {
+          net.players.push({ id: conn.peer, name: cleanName(d.name) });
+          sfx('ui');
+        }
+        broadcastLobby();
+        if (overlayId === 'ov-online') renderRoom();
+        break;
+      case 'st':
+        if (net.inGame) setGhost(conn.peer, d.s);
+        break;
+      case 'dead': {
+        const a = net.alive.get(conn.peer);
+        if (a && a.time == null) { a.time = Math.max(0, num(d.time)); checkEnd(); }
+        break;
+      }
+    }
+  }
+  function hostDrop(id) {
+    if (!net.conns.has(id)) return;
+    net.conns.delete(id);
+    net.players = net.players.filter((p) => p.id !== id);
+    net.ghosts.delete(id);
+    const a = net.alive.get(id);
+    if (a && a.time == null) { a.time = elapsed; a.left = true; checkEnd(); }
+    if (!net.inGame) {
+      broadcastLobby();
+      if (overlayId === 'ov-online') renderRoom();
+    }
+  }
+  function broadcastLobby() {
+    sendAll({ t: 'lobby', code: net.code, stage: net.stage, players: net.players });
+  }
+  function hostStart() {
+    if (net.role !== 'host' || net.inGame) return;
+    net.alive.clear();
+    for (const p of net.players) net.alive.set(p.id, { name: p.name, time: null, left: false });
+    sendAll({ t: 'start', stage: net.stage });
+    startOnlineGame();
+  }
+  function checkEnd() {
+    if (net.role !== 'host' || net.ended || !net.inGame) return;
+    for (const a of net.alive.values()) if (a.time == null) return;
+    net.ended = true;
+    const rank = [...net.alive.entries()]
+      .map(([id, a]) => ({ id, name: a.name, time: +a.time.toFixed(2), left: !!a.left }))
+      .sort((x, y) => y.time - x.time);
+    sendAll({ t: 'end', rank });
+    net.pendingRank = rank;
+  }
+
+  // ---- 部屋に入る（参加者） ----
+  async function joinRoom() {
+    if (net.busy || net.role) return;
+    const code = cleanCode($('on-code').value);
+    $('on-code').value = code;
+    if (code.length !== 4) { onStatus('4桁の数字を入力してね', true); return; }
+    net.busy = true;
+    setOnlineButtons();
+    const name = myName();
+    onStatus('つないでいます…');
+    try { await loadPeerLib(); } catch (e) {
+      net.busy = false; setOnlineButtons();
+      onStatus('通信ライブラリを読み込めませんでした。通信環境を確認してね', true);
+      return;
+    }
+    let peer;
+    try { peer = new window.Peer({ debug: 0 }); } catch (e) {
+      net.busy = false; setOnlineButtons(); onStatus(netErrorText('browser-incompatible'), true); return;
+    }
+    let joined = false, failed = false;
+    const fail = (msg) => {
+      if (joined || failed) return;
+      failed = true;
+      clearTimeout(timer);
+      try { peer.destroy(); } catch (e) { /* 破棄失敗 */ }
+      net.busy = false; setOnlineButtons();
+      onStatus(msg, true);
+    };
+    const timer = setTimeout(() => fail('つながりませんでした。コードと通信環境を確認してね'), 12000);
+    peer.on('open', (id) => {
+      if (failed) return;
+      const conn = peer.connect(NET.PREFIX + code, { reliable: true });
+      conn.on('open', () => {
+        if (failed) { try { conn.close(); } catch (e) { /* 切断失敗 */ } return; }
+        joined = true;
+        clearTimeout(timer);
+        Object.assign(net, { role: 'client', peer, hostConn: conn, code, myId: id, busy: false, inGame: false, ended: false });
+        net.players = [];
+        mode = 'online';
+        updateModeHud();
+        setOnlineButtons();
+        safeSend(conn, { t: 'hello', name });
+        showOnlinePane(true);
+        renderRoom();
+        onStatus('ホストのスタートを待っています');
+      });
+      conn.on('data', clientData);
+      conn.on('close', () => { if (joined && net.hostConn === conn) lostHost(); });
+      conn.on('error', () => { if (joined) { if (net.hostConn === conn) lostHost(); } else fail(netErrorText('peer-unavailable')); });
+    });
+    peer.on('error', (err) => { if (!joined) fail(netErrorText(err && err.type)); });
+  }
+  function clientData(d) {
+    if (!d || typeof d !== 'object' || net.role !== 'client') return;
+    switch (d.t) {
+      case 'deny':
+        lostHost(d.why === 'full' ? '部屋が満員です（最大4人）' : 'ゲーム中のため入れません。終わってから入ってね');
+        break;
+      case 'lobby':
+        net.players = Array.isArray(d.players)
+          ? d.players.slice(0, NET.MAX).map((p) => ({ id: String(p && p.id), name: cleanName(p && p.name) }))
+          : [];
+        net.stage = d.stage === 2 ? 2 : 1;
+        if (net.ended) net.inGame = false;
+        if (overlayId === 'ov-online') renderRoom();
+        break;
+      case 'start':
+        net.stage = d.stage === 2 ? 2 : 1;
+        startOnlineGame();
+        break;
+      case 'fb':
+        if (net.inGame && !net.ended) spawnNetFireball(d);
+        break;
+      case 'gh':
+        if (net.inGame) applyGhostPacket(d);
+        break;
+      case 'end':
+        if (net.inGame && !net.ended) { net.ended = true; net.pendingRank = sanitizeRank(d.rank); }
+        break;
+    }
+  }
+  function sanitizeRank(r) {
+    if (!Array.isArray(r)) return [];
+    return r.slice(0, NET.MAX).map((x) => ({
+      id: String(x && x.id), name: cleanName(x && x.name), time: Math.max(0, num(x && x.time)), left: !!(x && x.left)
+    }));
+  }
+  function lostHost(msg) {
+    leaveOnline(false);
+    if (overlayId !== 'ov-online') showTitle();
+    if (overlayId === 'ov-title') showOverlay('ov-online');
+    showOnlinePane(false);
+    setOnlineButtons();
+    onStatus(msg || 'ホストとの接続が切れました', true);
+  }
+
+  // ---- 退出 ----
+  function leaveOnline(toTitle) {
+    try { for (const c of net.conns.values()) c.close(); } catch (e) { /* 切断失敗 */ }
+    try { if (net.hostConn) net.hostConn.close(); } catch (e) { /* 切断失敗 */ }
+    try { if (net.peer) net.peer.destroy(); } catch (e) { /* 破棄失敗 */ }
+    Object.assign(net, { role: null, peer: null, hostConn: null, code: '', myId: '', inGame: false, ended: false, busy: false, pendingRank: null, aliveCount: 0 });
+    net.conns.clear();
+    net.players = [];
+    net.alive.clear();
+    net.ghosts.clear();
+    if (mode === 'online') { mode = save.lastMode; updateModeHud(); }
+    if (stageNo !== save.stage) { buildMap(save.stage); layout(); }
+    if (toTitle) showTitle();
+  }
+  function backToRoom() {
+    if (!net.role) { showTitle(); return; }
+    net.inGame = false;
+    net.ended = false;
+    net.pendingRank = null;
+    net.ghosts.clear();
+    AudioSys.stopBgm();
+    resetWorld();
+    state = 'title';
+    banner('', '');
+    if (net.role === 'host') { net.alive.clear(); broadcastLobby(); }
+    showOverlay('ov-online');
+    showOnlinePane(true);
+    renderRoom();
+    onStatus(net.role === 'host' ? 'みんながそろったらスタート！' : 'ホストのスタートを待っています');
+  }
+
+  // ---- ゲーム中 ----
+  function startOnlineGame() {
+    net.inGame = true;
+    net.ended = false;
+    net.pendingRank = null;
+    net.ghosts.clear();
+    net.sendT = 0;
+    net.myTime = 0;
+    net.aliveCount = net.players.length;
+    if (stageNo !== net.stage) { buildMap(net.stage); layout(); }
+    startGame('online');
+  }
+  // ホストの敵はミスした後も（ほかの人のために）動き続ける
+  function impsActive() {
+    return state === 'play' ||
+      (mode === 'online' && net.role === 'host' && net.inGame && !net.ended && (state === 'dead' || state === 'spectate'));
+  }
+  function updateImps(dt) {
+    if (mode === 'online' && net.role === 'client') applyImpNet(dt);
+    else for (const m of imps) updateImp(m, dt);
+  }
+  function applyImpNet(dt) {
+    for (const m of imps) {
+      m.anim += dt;
+      if (!m.alive) { m.vy += 1400 * dt; m.y += m.vy * dt; m.rot += dt * 8; continue; }
+      if (m.netX != null) {
+        m.x += (m.netX - m.x) * Math.min(1, dt * 15);
+        m.y += (m.netY - m.y) * Math.min(1, dt * 20);
+      }
+      m.throwAnim = Math.max(0, m.throwAnim - dt);
+    }
+  }
+  function spawnNetFireball(d) {
+    const f = {
+      x: num(d.x), y: num(d.y),
+      vx: clamp(num(d.vx), -600, 600), vy: clamp(num(d.vy), -800, 800),
+      r: FB.R, rot: 0, life: FB.LIFE, trailT: 0,
+      bounce: clamp(num(d.b, 320), 100, 600)
+    };
+    // 通信の遅れぶんだけ進めてから出す（最大0.3秒）
+    let lag = clamp(elapsed - num(d.at, elapsed), 0, 0.3);
+    while (lag >= STEP) {
+      if (!stepFireball(f, STEP)) return;
+      lag -= STEP;
+    }
+    fireballs.push(f);
+    sfx('throw');
+  }
+  function packState(p) {
+    const f = (p.onGround ? 1 : 0) | (p.crouch ? 2 : 0) | (p.sliding ? 4 : 0) | ((p.gp & 3) << 3) | (p.spinJump ? 32 : 0) | (p.dead ? 64 : 0);
+    return [
+      Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10, p.face, f,
+      Math.round(p.vx), Math.round(p.vy), +p.walkPhase.toFixed(2), +p.spinAnim.toFixed(3), +p.spinPhase.toFixed(2), +p.gpT.toFixed(3)
+    ];
+  }
+  function setGhost(id, s) {
+    if (!Array.isArray(s) || s.length < 10 || id === net.myId) return;
+    const x = num(s[0]), y = num(s[1]);
+    let gh = net.ghosts.get(id);
+    if (!gh) { gh = { x, y }; net.ghosts.set(id, gh); }
+    gh.tx = x; gh.ty = y;
+    gh.face = s[2] < 0 ? -1 : 1;
+    gh.flags = num(s[3]) | 0;
+    gh.vx = num(s[4]); gh.vy = num(s[5]);
+    gh.wp = num(s[6]);
+    gh.sa = clamp(num(s[7]), 0, PH.SPIN_ANIM);
+    gh.sp = num(s[8]);
+    gh.gpT = clamp(num(s[9]), 0, PH.GP_WAIT);
+  }
+  function applyGhostPacket(d) {
+    if (Array.isArray(d.g)) {
+      const seen = new Set();
+      for (const e of d.g) {
+        if (!Array.isArray(e)) continue;
+        const id = String(e[0]);
+        if (id === net.myId) continue;
+        seen.add(id);
+        setGhost(id, e.slice(1));
+      }
+      for (const id of [...net.ghosts.keys()]) if (!seen.has(id)) net.ghosts.delete(id);
+    }
+    if (Array.isArray(d.im)) {
+      d.im.forEach((a, i) => {
+        const m = imps[i];
+        if (!m || !Array.isArray(a)) return;
+        m.netX = num(a[0], m.x); m.netY = num(a[1], m.y);
+        m.face = a[2] < 0 ? -1 : 1;
+        m.state = a[3] ? 'aim' : 'walk';
+        m.t = num(a[4]);
+        m.throwAnim = num(a[5]);
+        m.onGround = !!a[6];
+        if (!a[7] && m.alive) { m.alive = false; m.vy = -380; m.vx = 0; }
+      });
+    }
+    net.aliveCount = num(d.al, net.aliveCount);
+  }
+  function updateGhosts(dt) {
+    const k = Math.min(1, dt * 18);
+    for (const gh of net.ghosts.values()) {
+      gh.x += (gh.tx - gh.x) * k;
+      gh.y += (gh.ty - gh.y) * k;
+      if (gh.sa > 0) gh.sa = Math.max(0, gh.sa - dt);
+    }
+  }
+  function netTick(dt) {
+    net.sendT -= dt;
+    if (net.sendT > 0) return;
+    net.sendT = NET.SEND;
+    const mine = packState(player);
+    if (net.role === 'client') { safeSend(net.hostConn, { t: 'st', s: mine }); return; }
+    // ホスト：全員の状態と敵の位置をまとめて配る
+    const g = [[net.myId, ...mine]];
+    for (const [id, gh] of net.ghosts) g.push([id, gh.tx, gh.ty, gh.face, gh.flags, gh.vx, gh.vy, gh.wp, gh.sa, gh.sp, gh.gpT]);
+    let alive = 0;
+    for (const a of net.alive.values()) if (a.time == null) alive++;
+    net.aliveCount = alive;
+    const im = imps.map((m) => [
+      Math.round(m.x), Math.round(m.y), m.face, m.state === 'aim' ? 1 : 0,
+      +m.t.toFixed(2), +m.throwAnim.toFixed(2), m.onGround ? 1 : 0, m.alive ? 1 : 0
+    ]);
+    sendAll({ t: 'gh', g, im, al: alive });
+  }
+  function netReportDeath(t) {
+    net.myTime = t;
+    if (net.role === 'host') {
+      const a = net.alive.get(net.myId);
+      if (a && a.time == null) { a.time = t; checkEnd(); }
+    } else {
+      safeSend(net.hostConn, { t: 'dead', time: t });
+    }
+  }
+  function drawGhosts(g, t) {
+    for (const [id, gh] of net.ghosts) {
+      if (gh.flags & 64) continue; // ミスした人は表示しない
+      const idx = net.players.findIndex((p) => p.id === id);
+      const o = {
+        x: gh.x, y: gh.y, face: gh.face, squash: 1, dead: false,
+        gp: (gh.flags >> 3) & 3, gpT: gh.gpT, crouch: !!(gh.flags & 2), sliding: !!(gh.flags & 4),
+        onGround: !!(gh.flags & 1), vx: gh.vx, vy: gh.vy, win: false, walkPhase: gh.wp,
+        spinAnim: gh.sa, spinT: 0, spinJump: !!(gh.flags & 32), spinPhase: gh.sp, blinkT: 1, deadT: 0
+      };
+      g.save();
+      g.globalAlpha = 0.42;
+      drawPlayer(g, t, o);
+      g.restore();
+      const name = idx >= 0 ? net.players[idx].name : '';
+      if (!name) continue;
+      g.save();
+      g.font = '800 10px "M PLUS Rounded 1c", sans-serif';
+      g.textAlign = 'center';
+      g.lineWidth = 3;
+      g.strokeStyle = 'rgba(0,0,0,.75)';
+      g.fillStyle = GHOST_COLORS[idx % GHOST_COLORS.length];
+      g.strokeText(name, gh.x, gh.y - 58);
+      g.fillText(name, gh.x, gh.y - 58);
+      g.restore();
+    }
+  }
+  function showOnlineResult(rank) {
+    net.pendingRank = null;
+    net.ended = true;
+    resultShown = true;
+    resultAt = performance.now();
+    state = 'over';
+    AudioSys.stopBgm();
+    banner('', '');
+    const me = rank.findIndex((r) => r.id === net.myId);
+    const title = $('res-title');
+    title.textContent = rank.length <= 1 ? 'RESULT' : me === 0 ? 'WIN!!' : me > 0 ? `${me + 1}位` : 'RESULT';
+    title.className = 'res-title ' + (me === 0 && rank.length > 1 ? 'clear' : 'miss');
+    $('res-time').textContent = net.myTime.toFixed(2);
+    $('res-new').hidden = true;
+    $('res-unlock').hidden = true;
+    $('res-medal').hidden = true;
+    $('res-best').parentElement.hidden = true;
+    $('res-mode').textContent = `オンライン対戦（${rank.length}人）`;
+    $('res-msg').textContent = rank.length <= 1 ? 'ひとりで練習した記録です' : me === 0 ? 'いちばん長く生き残った！' : 'くやしい！もう一回！';
+    const ol = $('res-rank');
+    ol.textContent = '';
+    rank.forEach((r, i) => {
+      const li = document.createElement('li');
+      if (r.id === net.myId) li.className = 'me';
+      const pos = document.createElement('span');
+      pos.className = 'rk-pos';
+      pos.textContent = `${i + 1}位`;
+      const nm = document.createElement('span');
+      nm.className = 'rk-name';
+      nm.textContent = r.name + (r.left ? '（切断）' : '');
+      const tm = document.createElement('span');
+      tm.className = 'rk-time';
+      tm.textContent = r.time.toFixed(2) + '秒';
+      li.append(pos, nm, tm);
+      ol.appendChild(li);
+    });
+    ol.hidden = false;
+    $('btn-retry').textContent = '部屋に戻る';
+    $('btn-r-title').textContent = '退出してタイトルへ';
+    showOverlay('ov-result');
+  }
+
+  $('btn-online').addEventListener('click', () => { AudioSys.init(); openOnline(); });
+  $('btn-on-create').addEventListener('click', createRoom);
+  $('btn-on-join').addEventListener('click', joinRoom);
+  $('btn-on-back').addEventListener('click', closeOnlineMenu);
+  $('btn-on-start').addEventListener('click', hostStart);
+  // 招待リンク：友達はタップするだけで部屋に入れる
+  function inviteUrl() {
+    return `${location.origin}${location.pathname}?room=${net.code}`;
+  }
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; }
+    } catch (e) { /* 下の方法を試す */ }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (e) { return false; }
+  }
+  async function shareInvite() {
+    if (!net.code) return;
+    const url = inviteUrl();
+    const text = `BLAZE DODGE で勝負しよう！ 部屋コード：${net.code}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'BLAZE DODGE', text, url }); return; } catch (e) {
+        if (e && e.name === 'AbortError') return; // 共有をやめただけ
+      }
+    }
+    const ok = await copyText(`${text}\n${url}`);
+    onStatus(ok ? '招待リンクをコピーしました。LINEなどに貼り付けて送ってね' : `このリンクを送ってね：${url}`, !ok);
+  }
+  // 招待リンク（?room=1234）から開いたら、そのまま部屋に入る
+  function handleInviteLink() {
+    let code = '';
+    try { code = cleanCode(new URLSearchParams(location.search).get('room')); } catch (e) { return; }
+    try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* 消せなくても問題なし */ }
+    if (code.length !== 4 || overlayId !== 'ov-title') return;
+    openOnline();
+    $('on-code').value = code;
+    if (!save.netName) $('on-name').value = 'ゲスト' + (10 + Math.floor(Math.random() * 90));
+    joinRoom();
+  }
+  $('btn-on-invite').addEventListener('click', shareInvite);
+
+  $('btn-on-leave').addEventListener('click', () => {
+    leaveOnline(false);
+    showOnlinePane(false);
+    setOnlineButtons();
+    onStatus('部屋を出ました');
+  });
+  $('on-code').addEventListener('input', () => {
+    const el = $('on-code');
+    const v = cleanCode(el.value);
+    if (v !== el.value) el.value = v;
+  });
+
 
   /* ===== 15. レイアウト ===== */
   let isTouch = !!((window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
@@ -2962,6 +3646,11 @@
     buf.down = Math.max(0, buf.down - dt);
     buf.up = Math.max(0, buf.up - dt);
     stateT += dt;
+    // オンライン：自分の状態を送る・ゴーストを動かす
+    if (mode === 'online' && net.inGame && ['ready', 'play', 'dead', 'spectate'].includes(state)) {
+      netTick(dt);
+      updateGhosts(dt);
+    }
 
     switch (state) {
       case 'title':
@@ -2971,7 +3660,7 @@
         break;
       case 'ready':
         updatePlayer(dt);
-        for (const m of imps) updateImp(m, dt);
+        updateImps(dt);
         updateParticles(dt);
         if (stateT >= 1.4) {
           state = 'play';
@@ -2986,7 +3675,7 @@
         if (mode === 'normal' && elapsed >= TIME_LIMIT) { clearGame(); break; }
         updatePlayer(dt);
         if (state !== 'play') break; // このステップでミスした
-        for (const m of imps) updateImp(m, dt);
+        updateImps(dt);
         updateFireballs(dt);
         updateParticles(dt);
         if (mode === 'normal') {
@@ -3010,7 +3699,22 @@
       case 'dead':
         updatePlayer(dt);
         updateParticles(dt);
-        if (stateT > 2.4 && !resultShown) showResult(false);
+        if (mode === 'online') {
+          // オンライン：ほかの人はまだ遊んでいるので世界は動かし続け、そのあと観戦へ
+          elapsed += dt;
+          updateImps(dt);
+          updateFireballs(dt);
+          if (stateT > 2.4) { state = 'spectate'; stateT = 0; banner('観戦中', 'spect'); }
+        } else if (stateT > 2.4 && !resultShown) showResult(false);
+        break;
+      case 'spectate':
+        elapsed += dt;
+        updateImps(dt);
+        updateFireballs(dt);
+        updateParticles(dt);
+        break;
+      case 'over':
+        updateParticles(dt);
         break;
       case 'clear':
         updatePlayer(dt);
@@ -3018,6 +3722,11 @@
         updateParticles(dt);
         if (stateT > 3 && !resultShown) showResult(true);
         break;
+    }
+    // オンライン：全員ミスしたら順位を表示
+    if (mode === 'online' && net.pendingRank && !resultShown &&
+        (state === 'spectate' || (state === 'dead' && stateT > 1.6))) {
+      showOnlineResult(net.pendingRank);
     }
     updateShake(dt);
   }
@@ -3029,7 +3738,8 @@
     if (w !== lastWatch) { watchEl.textContent = w; lastWatch = w; }
     const rem = Math.max(0, Math.ceil(TIME_LIMIT - elapsed - 1e-6));
     let rs;
-    if (mode === 'endless') rs = '∞';
+    if (mode === 'online') rs = `残り${net.aliveCount}人`;
+    else if (mode === 'endless') rs = '∞';
     else if (mode === 'hard') rs = 'Lv.' + (state === 'play' ? hardLevel() : hardLv);
     else rs = String(rem).padStart(3, '0');
     if (rs !== lastRemain) { remainEl.textContent = rs; lastRemain = rs; }
@@ -3046,6 +3756,7 @@
     drawTorches(ctx, time);
     drawSafeGlow(ctx, time);
     for (const m of imps) drawImp(ctx, m, time);
+    if (mode === 'online' && net.inGame) drawGhosts(ctx, time);
     drawFireballs(ctx);
     drawPlayer(ctx, time);
     drawParticles(ctx);
@@ -3082,4 +3793,5 @@
   updateTitleBests();
   layout();
   requestAnimationFrame((t) => { last = t; frame(t); });
+  setTimeout(handleInviteLink, 300);
 })();

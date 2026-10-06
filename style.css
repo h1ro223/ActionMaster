@@ -211,6 +211,8 @@ body.touch #game { border-radius: 0; box-shadow: none; }
     0 calc(var(--u) * 0.5) 0 #000;
 }
 #hud-remain.is-hard { color: #ff8a6a; }
+#hud-remain.is-online { color: #9fd0ff; font-size: calc(var(--u) * 2.6); }
+#hud-remain.is-online .clock { display: none; }
 #hud-remain.is-hard .clock { display: none; }
 #hud-remain.warn { color: #ff7a5c; animation: warnPulse 0.5s ease-in-out infinite alternate; }
 @keyframes warnPulse { from { transform: scale(1); } to { transform: scale(1.1); } }
@@ -258,6 +260,13 @@ body.touch #game { border-radius: 0; box-shadow: none; }
 }
 #banner.ready { animation: bannerIn 0.35s ease-out forwards; color: #e9f4ff; }
 #banner.go { animation: bannerGo 0.9s ease-out forwards; color: var(--fire); }
+#banner.spect {
+  top: 14%;
+  font-size: calc(var(--u) * 3.6);
+  color: #cfe4ff;
+  opacity: 0.9;
+  animation: bannerIn 0.35s ease-out forwards;
+}
 #banner.clear { animation: bannerIn 0.45s cubic-bezier(.2, 1.6, .4, 1) forwards; color: #ffe27a; font-size: calc(var(--u) * 9); }
 
 @keyframes bannerIn {
@@ -867,6 +876,50 @@ body.portrait #ov-settings .card { transform-origin: top center; }
   .overlay.show, .res-new, #hud-remain.warn { animation: none; }
 }
 
+/* ===== オンライン対戦 ===== */
+input[type="text"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  touch-action: manipulation;
+}
+.on-field { display: flex; align-items: center; gap: 10px; margin: 4px auto 12px; max-width: 320px; font-size: 13px; font-weight: 800; color: var(--teal); }
+.on-field input, .on-join input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font: 800 16px/1.2 'M PLUS Rounded 1c', sans-serif; /* 16px未満だとiPhoneで勝手に拡大されるため */
+  color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  outline: none;
+}
+.on-field input:focus, .on-join input:focus { border-color: var(--teal); }
+.on-join { display: flex; gap: 8px; width: 100%; max-width: 360px; }
+.on-join input { letter-spacing: 0.3em; text-align: center; width: 7em; flex: 0 1 7em; font-variant-numeric: tabular-nums; }
+.on-join .btn { flex: 1 1 auto; min-width: 0; }
+.on-code-label { font-size: 12px; color: var(--muted); }
+.on-code-show { font-family: 'DotGothic16', monospace; font-size: 44px; letter-spacing: 0.25em; color: #ffe27a; text-shadow: 0 0 14px rgba(255, 200, 60, 0.5); line-height: 1.2; }
+.on-stage { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.on-players { list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-width: 380px; margin: 0 auto; text-align: left; }
+.on-players li { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; font-size: 13px; font-weight: 800; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.on-players li.empty { color: var(--muted); font-weight: 500; opacity: 0.6; }
+.on-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); }
+.on-wait { margin-top: 10px; font-size: 13px; color: #cfe4ff; }
+.on-status { min-height: 1.4em; margin-top: 10px; font-size: 13px; font-weight: 800; color: var(--teal); }
+.on-status.err { color: #ff8a6a; }
+.on-note { margin-top: 6px; font-size: 10.5px; line-height: 1.5; color: var(--muted); opacity: 0.8; }
+.btn.online { background: linear-gradient(180deg, #4b6bd6, #2b3f8f); box-shadow: 0 5px 0 #17214d; color: #fff; }
+.res-rank { list-style: none; margin: 10px auto 0; max-width: 340px; display: flex; flex-direction: column; gap: 5px; }
+.res-rank[hidden] { display: none; }
+.res-rank li { display: grid; grid-template-columns: 3em 1fr auto; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--line); text-align: left; }
+.res-rank li:first-child { border-color: rgba(255, 216, 74, 0.6); background: rgba(255, 216, 74, 0.1); }
+.res-rank li.me { outline: 2px solid var(--teal); outline-offset: 1px; }
+.rk-pos { font-weight: 800; color: #ffe27a; }
+.rk-name { font-weight: 800; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rk-time { font-variant-numeric: tabular-nums; color: var(--muted); }
+
 /* ===== 横向きスマホなど低い画面：横に並べてスクロールなしで収める ===== */
 @media (max-height: 520px) and (orientation: landscape) {
   .ov-head { font-size: 20px; }
@@ -889,6 +942,9 @@ body.portrait #ov-settings .card { transform-origin: top center; }
 
   /* 結果：ボタンを横並びに */
   #ov-result .card { width: min(520px, calc(100% * var(--z) / var(--fit))); }
+  #ov-online .card { width: min(560px, calc(100% * var(--z) / var(--fit))); }
+  .on-code-show { font-size: 34px; }
+  .on-players { grid-template-columns: repeat(4, 1fr); max-width: none; }
   #ov-result .btn-col { flex-direction: row; justify-content: center; }
   #ov-result .btn-col .btn { min-width: 0; padding: 10px 20px; font-size: 15px; }
   .res-title { font-size: 34px; }
