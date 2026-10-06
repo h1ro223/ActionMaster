@@ -257,6 +257,7 @@
     stage: 1,                                    // 選択中のステージ
     muted: false, lastMode: 'normal', ctl: defaultCtl(),
     padSwap: false,                              // コントローラーのA/B・X/Y入れ替え
+    padAirSpin: true,                            // コントローラー：空中でジャンプボタン → 空中スピン
     netName: '',                                 // オンライン対戦の名前
     game: 'blaze',                               // 最後に選んだゲーム（blaze / rocket）
     rsBest: { normal: 0, endless: 0 },           // ROCKET STREAKのベスト（1UPの数）
@@ -284,6 +285,7 @@
     if (save.stage2 && s.stage === 2) save.stage = 2;
     if (typeof s.muted === 'boolean') save.muted = s.muted;
     if (typeof s.padSwap === 'boolean') save.padSwap = s.padSwap;
+    if (typeof s.padAirSpin === 'boolean') save.padAirSpin = s.padAirSpin;
     if (s.game === 'rocket' || s.game === 'blaze') save.game = s.game;
     if (s.rsLast === 'normal' || s.rsLast === 'endless') save.rsLast = s.rsLast;
     if (s.rsBest && typeof s.rsBest === 'object') {
@@ -452,13 +454,13 @@
 
   /* ===== 6. 入力 ===== */
   const input = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
-  const buf = { jump: 0, spin: 0, down: 0, up: 0 };
+  const buf = { jump: 0, spin: 0, down: 0, up: 0, jumpPad: false }; // jumpPad：今のジャンプ入力がコントローラーからか
   const kb = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
   const kbEdge = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
   const tc = { left: false, right: false, up: false, down: false, jump: false, spin: false, dash: false };
   const KEY_UP = { ArrowUp: true, KeyW: true }; // ↑はジャンプ兼ヒップキャンセル
   const tcEdge = { jump: false, spin: false };
-  const gpPrev = { jump: false, start: false };
+  const gpPrev = { jump: false, start: false, gameJump: false };
 
   const KEYMAP = {
     ArrowLeft: 'left', KeyA: 'left',
@@ -518,7 +520,14 @@
       dash: kb.dash || tc.dash || gp.dash,
       spin: kb.spin || tc.spin || gp.spin
     };
-    if ((cur.jump && !input.jump) || kbEdge.jump || tcEdge.jump) buf.jump = PH.JUMP_BUF;
+    // ジャンプの押し始め（コントローラーだけで押されたかも記録）
+    const padJumpEdge = gp.jump && !gpPrev.gameJump;
+    const otherJumpEdge = kbEdge.jump || tcEdge.jump || ((kb.jump || tc.jump) && !input.jump);
+    gpPrev.gameJump = gp.jump;
+    if (padJumpEdge || otherJumpEdge || (cur.jump && !input.jump)) {
+      buf.jump = PH.JUMP_BUF;
+      buf.jumpPad = padJumpEdge && !otherJumpEdge;
+    }
     if ((cur.spin && !input.spin) || kbEdge.spin || tcEdge.spin) buf.spin = 0.1;
     if ((cur.down && !input.down) || kbEdge.down) buf.down = 0.1;
     if ((cur.up && !input.up) || kbEdge.up) buf.up = 0.05;
@@ -719,7 +728,7 @@
           sfx('wallkick');
           sparks(p.x + s * PH.W / 2, p.y - p.h * 0.5, 8, '#cfe8ff', 160);
           dust(p.x + s * PH.W / 2, p.y - p.h * 0.4, 3);
-        } else if (p.spinCool <= 0 && !p.crouch && !p.spinJump) {
+        } else if (p.spinCool <= 0 && !p.crouch && !p.spinJump && !(buf.jumpPad && !save.padAirSpin)) {
           // 空中でジャンプボタン → 空中スピン（壁キックできる場所では壁キック優先）
           buf.jump = 0;
           buf.spin = Math.max(buf.spin, 0.05);
@@ -2706,6 +2715,10 @@
     sw.setAttribute('aria-checked', save.padSwap ? 'true' : 'false');
     sw.classList.toggle('on', save.padSwap);
     $('out-swap').textContent = save.padSwap ? 'ON' : 'OFF';
+    const as = $('set-padspin');
+    as.setAttribute('aria-checked', save.padAirSpin ? 'true' : 'false');
+    as.classList.toggle('on', save.padAirSpin);
+    $('out-padspin').textContent = save.padAirSpin ? 'ON' : 'OFF';
   }
   function syncSettingsUI() {
     syncSwapUI();
@@ -2898,6 +2911,13 @@
     gpMenu.b = true;
   });
 
+  $('set-padspin').addEventListener('click', () => {
+    save.padAirSpin = !save.padAirSpin;
+    persist();
+    syncSwapUI();
+    sfx('ui');
+  });
+
   // ===== データ初期化（2回押しで実行） =====
   let resetTimer = 0;
   function disarmDataReset() {
@@ -2916,6 +2936,7 @@
     save.stage = 1;
     save.muted = false;
     save.padSwap = false;
+    save.padAirSpin = true;
     save.netName = '';
     save.lastMode = 'normal';
     save.rsBest = { normal: 0, endless: 0 };
@@ -3017,7 +3038,8 @@
     TIME: 100,                // ノーマルの制限時間
     SPEED: 160,               // ロケットの速さ（毎秒5マス）
     RW: 50, RH: 28,           // ロケットの大きさ＝当たり判定（長さ約1.6マス・太さ約0.9マス）
-    INTERVAL: 3.75,           // 4つの砲台が同時に撃つ間隔（最初はスタートと同時）
+    FIRST: 1.0,               // スタート（GO!）から最初の発射までの時間
+    INTERVAL: 3.75,           // 発射の間隔（砲台ごとに数える）
     BOUNCE: 746,              // 踏んだときの跳ね返り：長押しで6マス、すぐ離すと約2.5マス
     POINTS: [100, 200, 400, 800, 1000, 2000, 4000, 8000] // 9回目からは踏むたびに1UP
   };
@@ -3034,18 +3056,17 @@
   let rsStomps = 0;
   let ups = 0;
   let rsStarted = false; // 1回でも踏んだか（踏んだあとは着地で終了）
-  let rsFireT = 0;       // 次に発射するまでの時間
   let rsEnd = '';      // 'time' / 'land' / 'miss'
   let rocketSeq = 0;
 
   function resetRocketWorld() {
     rockets = [];
-    cannons = (curStage.cannons || []).map((cn) => ({ ...cn, flash: 0 }));
+    // t：次の発射までの時間 / hold：プレイヤーが触れたので、1マス以上離れるまでカウントを止めている
+    cannons = (curStage.cannons || []).map((cn) => ({ ...cn, flash: 0, t: RS.FIRST, hold: false }));
     rsChain = 0;
     rsStomps = 0;
     ups = 0;
     rsStarted = false;
-    rsFireT = 0;
     rsEnd = '';
   }
   // 砲台の上に乗っている、または横にくっついているか
@@ -3058,8 +3079,15 @@
     const side = t < y1 && b > y0 && (Math.abs(r - x0) <= 3 || Math.abs(l - x1) <= 3);
     return onTop || side;
   }
+  // 砲台のまわり1マス以内にいるか
+  function playerNearCannon(cn) {
+    const p = player;
+    if (p.dead) return false;
+    const hw = PH.W / 2, l = p.x - hw, r = p.x + hw, t = p.y - p.h, b = p.y;
+    const x0 = cn.c * TILE - TILE, x1 = (cn.c + 1) * TILE + TILE, y0 = cn.r * TILE - TILE, y1 = (cn.r + 2) * TILE + TILE;
+    return r > x0 && l < x1 && b > y0 && t < y1;
+  }
   function fireRocket(cn) {
-    if (playerTouchesCannon(cn)) return false; // 乗っている・くっついているときは撃たない
     const x = cn.dir > 0 ? (cn.c + 1) * TILE + RS.RW / 2 - 6 : cn.c * TILE - RS.RW / 2 + 6;
     const y = cn.r * TILE + RS.RH / 2 - 2; // 同じ高さの足場に立っているプレイヤーの頭にはギリギリ当たらない高さ
     rockets.push({ id: ++rocketSeq, x, y, dir: cn.dir, dead: false, vy: 0, rot: 0, shiftT: 0, shiftV: 0, bumpCD: 0, trailT: 0 });
@@ -3072,11 +3100,20 @@
   }
   function updateRocketWorld(dt, canFire) {
     if (canFire) {
-      // 4つの砲台が同時に、一定の間隔で撃つ（前のロケットが残っていても撃つ）
-      rsFireT -= dt;
-      if (rsFireT <= 0) {
-        rsFireT += RS.INTERVAL;
-        for (const cn of cannons) fireRocket(cn);
+      // 砲台ごとに一定の間隔で撃つ（前のロケットが残っていても撃つ）
+      for (const cn of cannons) {
+        // 乗る・横にくっつく → 発射までの時間をリセットして止める
+        if (playerTouchesCannon(cn)) { cn.hold = true; cn.t = RS.INTERVAL; continue; }
+        // まわり1マス以内にいる間は止めたまま。離れたらカウント開始
+        if (cn.hold) {
+          if (playerNearCannon(cn)) { cn.t = RS.INTERVAL; continue; }
+          cn.hold = false;
+        }
+        cn.t -= dt;
+        if (cn.t <= 0) {
+          cn.t += RS.INTERVAL;
+          fireRocket(cn);
+        }
       }
     }
     for (const cn of cannons) cn.flash = Math.max(0, cn.flash - dt);
