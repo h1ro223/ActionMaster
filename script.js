@@ -36,7 +36,7 @@
   // プレイヤーの物理（単位：px, 秒）
   const PH = {
     W: 20, H: 40, CROUCH_H: 26,
-    WALK: 150, RUN: 255,
+    WALK: 150, RUN: 285, // ダッシュは歩きの約1.9倍
     ACC: 820, ACC_RUN: 980, DEC: 950, SKID: 1900, ACC_AIR: 640, AIR_DRAG: 150,
     JUMP_V: 681, JUMP_RUN_BONUS: 0.22,
     G_UP: 1450, G_UP_RELEASE: 3600, G_DOWN: 2300, MAX_FALL: 640,
@@ -239,6 +239,8 @@
   }
   const isSolidCh = (ch) => ch === '#' || ch === 'B' || ch === 'K'; // K＝砲台
   const solidAt = (c, r) => isSolidCh(tileAt(c, r));
+  // プレイヤー用：トゲも壁・床として扱う（横から触れてもダメージなし。上から乗ったときだけミス）
+  const blockAt = (c, r) => { const ch = tileAt(c, r); return isSolidCh(ch) || ch === '^'; };
   function rectSolid(l, t, r, b) {
     const c0 = Math.floor(l / TILE), c1 = Math.floor((r - 0.001) / TILE);
     const r0 = Math.floor(t / TILE), r1 = Math.floor((b - 0.001) / TILE);
@@ -817,10 +819,10 @@
     const r0 = Math.floor((p.y - p.h) / TILE), r1 = Math.floor((p.y - 0.001) / TILE);
     if (p.vx > 0) {
       const c = Math.floor((p.x + hw - 0.001) / TILE);
-      for (let r = r0; r <= r1; r++) if (solidAt(c, r)) { p.x = c * TILE - hw; p.vx = 0; break; }
+      for (let r = r0; r <= r1; r++) if (blockAt(c, r)) { p.x = c * TILE - hw; p.vx = 0; break; }
     } else if (p.vx < 0) {
       const c = Math.floor((p.x - hw) / TILE);
-      for (let r = r0; r <= r1; r++) if (solidAt(c, r)) { p.x = (c + 1) * TILE + hw; p.vx = 0; break; }
+      for (let r = r0; r <= r1; r++) if (blockAt(c, r)) { p.x = (c + 1) * TILE + hw; p.vx = 0; break; }
     }
   }
 
@@ -829,17 +831,25 @@
     const hw = PH.W / 2;
     const c0 = Math.floor((p.x - hw) / TILE), c1 = Math.floor((p.x + hw - 0.001) / TILE);
     p.onGround = false;
+    p.onSpike = false;
     if (p.vy >= 0) {
       const row = Math.floor(p.y / TILE);
+      let safe = false, spike = false;
       for (let c = c0; c <= c1; c++) {
-        if (solidAt(c, row)) { p.y = row * TILE; p.vy = 0; p.onGround = true; break; }
+        const ch = tileAt(c, row);
+        if (isSolidCh(ch)) safe = true;
+        else if (ch === '^') spike = true;
+      }
+      if (safe || spike) {
+        p.y = row * TILE; p.vy = 0; p.onGround = true;
+        p.onSpike = !safe; // 足元が全部トゲ＝トゲを上から踏んだ（安全な足場にも乗っていればセーフ）
       }
     } else {
       const top = p.y - p.h;
       if (top < 0) { p.y = p.h; p.vy = 0; return; } // 画面上端は見えない天井
       const row = Math.floor(top / TILE);
       for (let c = c0; c <= c1; c++) {
-        if (solidAt(c, row)) { p.y = (row + 1) * TILE + p.h; p.vy = 0; break; }
+        if (blockAt(c, row)) { p.y = (row + 1) * TILE + p.h; p.vy = 0; break; }
       }
     }
   }
@@ -849,7 +859,7 @@
     const x = side < 0 ? p.x - hw - 1.5 : p.x + hw + 1.5;
     const c = Math.floor(x / TILE);
     const r0 = Math.floor((p.y - p.h + 6) / TILE), r1 = Math.floor((p.y - 6) / TILE);
-    for (let r = r0; r <= r1; r++) if (solidAt(c, r)) return true;
+    for (let r = r0; r <= r1; r++) if (blockAt(c, r)) return true;
     return false;
   }
 
@@ -886,16 +896,8 @@
       if (p.y > LH + 30) { killPlayer(); return; }
     }
 
-    // トゲ
-    const c0 = Math.floor(l / TILE), c1 = Math.floor((r - 0.001) / TILE);
-    const r0 = Math.floor(t / TILE), r1 = Math.floor((b - 0.001) / TILE);
-    for (let rr = r0; rr <= r1; rr++) {
-      for (let cc = c0; cc <= c1; cc++) {
-        if (tileAt(cc, rr) !== '^') continue;
-        const sx = cc * TILE + 4, sy = rr * TILE + 12, sw = TILE - 8, sh = TILE - 12;
-        if (r > sx && l < sx + sw && b > sy && t < sy + sh) { killPlayer(); return; }
-      }
-    }
+    // トゲ：真上から乗ったときだけミス（横は壁あつかい）
+    if (p.onSpike) { killPlayer(); return; }
 
     // 火の玉
     for (const f of fireballs) {
