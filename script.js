@@ -185,6 +185,36 @@
     }
   };
 
+  // ROCKET STREAK：オーロラの雪山（中央は穴）。砲台は地形と同じく足場になる
+  STAGES[3] = {
+    cols: 34,
+    safe: [9, 12],          // スタート位置（安全ブロックはなし）
+    openBottom: true,       // 画面の下は穴
+    build() {
+      fillTiles(0, 12, 9, 18, '#');   // 左の高い足場
+      fillTiles(10, 15, 12, 18, '#'); // 左の段
+      fillTiles(13, 17, 15, 18, '#'); // 左の低い段
+      fillTiles(18, 17, 20, 18, '#'); // 右の低い段
+      fillTiles(21, 16, 23, 18, '#'); // 右の段（左より少し低い）
+      fillTiles(24, 12, 30, 18, '#'); // 右の高い足場
+      fillTiles(31, 13, 33, 18, '#'); // 右奥の下り
+      for (const cn of STAGES[3].cannons) fillTiles(cn.c, cn.r, cn.c, cn.r + 1, 'K'); // 砲台
+    },
+    cannons: [
+      { c: 7, r: 10, dir: 1, delay: 0.7 },   // 左の高い足場
+      { c: 10, r: 13, dir: 1, delay: 1.7 },  // 左の段
+      { c: 23, r: 14, dir: -1, delay: 2.4 }, // 右の段
+      { c: 26, r: 10, dir: -1, delay: 1.2 }  // 右の高い足場
+    ],
+    imps: [],
+    torches: [],
+    enemyText: '',
+    theme: {
+      bg: 'aurora', snow: true, stoneH: 276, stoneHV: 8, stoneS: 16, stoneSV: 6, stoneL: 60,
+      rim: 'rgba(220,235,255,.18)', cap: false, glow: '255,150,60', flame: ['#ff6a2a', '#ffc24a', '#fff6cf']
+    }
+  };
+
   let stageNo = 1;
   let curStage = STAGES[1];
   let staticDirty = true; // 背景・地形の描き直しが必要か
@@ -201,11 +231,12 @@
   buildMap(1);
 
   function tileAt(c, r) {
-    if (c < 0 || c >= COLS || r >= ROWS) return '#';
+    if (c < 0 || c >= COLS) return '#';
+    if (r >= ROWS) return curStage.openBottom ? '.' : '#';
     if (r < 0) return '.';
     return map[r][c];
   }
-  const isSolidCh = (ch) => ch === '#' || ch === 'B';
+  const isSolidCh = (ch) => ch === '#' || ch === 'B' || ch === 'K'; // K＝砲台
   const solidAt = (c, r) => isSolidCh(tileAt(c, r));
   function rectSolid(l, t, r, b) {
     const c0 = Math.floor(l / TILE), c1 = Math.floor((r - 0.001) / TILE);
@@ -225,7 +256,10 @@
     stage: 1,                                    // 選択中のステージ
     muted: false, lastMode: 'normal', ctl: defaultCtl(),
     padSwap: false,                              // コントローラーのA/B・X/Y入れ替え
-    netName: ''                                  // オンライン対戦の名前
+    netName: '',                                 // オンライン対戦の名前
+    game: 'blaze',                               // 最後に選んだゲーム（blaze / rocket）
+    rsBest: { normal: 0, endless: 0 },           // ROCKET STREAKのベスト（1UPの数）
+    rsLast: 'normal'                             // ROCKET STREAKで最後に遊んだモード
   };
   const okNum = (v) => typeof v === 'number' && isFinite(v);
   function readBests(src, dst) {
@@ -249,6 +283,11 @@
     if (save.stage2 && s.stage === 2) save.stage = 2;
     if (typeof s.muted === 'boolean') save.muted = s.muted;
     if (typeof s.padSwap === 'boolean') save.padSwap = s.padSwap;
+    if (s.game === 'rocket' || s.game === 'blaze') save.game = s.game;
+    if (s.rsLast === 'normal' || s.rsLast === 'endless') save.rsLast = s.rsLast;
+    if (s.rsBest && typeof s.rsBest === 'object') {
+      for (const k of ['normal', 'endless']) if (okNum(s.rsBest[k])) save.rsBest[k] = Math.max(0, Math.floor(s.rsBest[k]));
+    }
     if (typeof s.netName === 'string') save.netName = s.netName.replace(/[\u0000-\u001f<>]/g, '').slice(0, 10);
     if (s.lastMode === 'normal' || s.lastMode === 'endless' || s.lastMode === 'hard') save.lastMode = s.lastMode;
     if (s.ctl && typeof s.ctl === 'object') {
@@ -269,7 +308,8 @@
       }
     }
   } catch (e) { /* 読み込み失敗時は初期値 */ }
-  if (save.stage === 2) buildMap(2);
+  if (save.game === 'rocket') buildMap(3);
+  else if (save.stage === 2) buildMap(2);
   function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(save)); } catch (e) { /* 保存できない環境 */ }
   }
@@ -365,6 +405,10 @@
         case 'hipCancel': tone('triangle', 900, 1600, 0.09, 0.1); noise(0.05, 0.1, 'highpass', 2500); break;
         case 'medal': [1047, 1319, 1568].forEach((f, i) => tone('triangle', f, 0, 0.16, 0.1, i * 0.06)); break;
         case 'medalTop': [1319, 1568, 2093, 2637].forEach((f, i) => tone('triangle', f, 0, 0.22, 0.09, i * 0.06)); break;
+        case 'launch': noise(0.22, 0.28, 'lowpass', 700); tone('sine', 160, 55, 0.22, 0.3); break;
+        case 'clank': tone('square', 1300, 650, 0.08, 0.08); noise(0.08, 0.16, 'highpass', 3000); break;
+        case 'oneup': [988, 1319, 1760].forEach((f, i) => tone('triangle', f, 0, 0.12, 0.12, i * 0.05)); tone('sine', 2637, 0, 0.18, 0.05, 0.15); break;
+        case 'finish': [1047, 880, 1175, 1568].forEach((f, i) => tone('triangle', f, 0, 0.18, 0.1, i * 0.09)); break;
         case 'deny': tone('square', 230, 150, 0.13, 0.07); break;
         case 'levelup': [660, 880, 1320].forEach((f, i) => tone('square', f, 0, 0.1, 0.08, i * 0.07)); break;
       }
@@ -497,7 +541,9 @@
   let resultShown = false;
   let resultAt = 0;
   let lastNew = false;
-  let mode = save.lastMode; // normal / endless / hard
+  let game = save.game; // 'blaze'（BLAZE DODGE）/ 'rocket'（ROCKET STREAK）
+  let mode = game === 'rocket' ? 'rs-' + save.rsLast : save.lastMode; // normal / endless / hard / online / rs-normal / rs-endless
+  const isRocketMode = () => mode === 'rs-normal' || mode === 'rs-endless';
   let hardLv = 1;
   let unlockedNow = false; // このクリアでハードモードが解放されたか
   let medalNow = 0;         // このプレイで獲得したメダル（ノーマルモード）
@@ -542,6 +588,7 @@
     resultShown = false;
     shakeT = 0; shakeX = 0; shakeY = 0;
     setMedal(0, false);
+    resetRocketWorld();
   }
 
   /* ===== 8. プレイヤー ===== */
@@ -797,6 +844,8 @@
   }
 
   function onLand(p, vy) {
+    // ROCKET STREAK：一度地面を離れたあとに着地したら終了
+    if (isRocketMode() && state === 'play' && rsArmed) finishRocket('land');
     p.spinT = 0; p.spinJump = false; p.sliding = false;
     p.spinCool = 0; p.hoverT = 0; p.recoverT = 0; p.spinAnim = 0;
     if (p.gp === 2) {
@@ -817,9 +866,15 @@
   }
 
   function checkHazards(p) {
-    if (p.dead) return;
+    if (p.dead || state !== 'play') return;
     const hw = PH.W / 2 - 1.5;
     const l = p.x - hw, r = p.x + hw, t = p.y - p.h + 3, b = p.y - 0.5;
+
+    // ROCKET STREAK：ロケット・穴
+    if (isRocketMode()) {
+      if (rocketHazards(p, l, r, t, b)) { killPlayer(); return; }
+      if (p.y > LH + 30) { killPlayer(); return; }
+    }
 
     // トゲ
     const c0 = Math.floor(l / TILE), c1 = Math.floor((r - 0.001) / TILE);
@@ -872,6 +927,7 @@
     for (let i = 0; i < 6; i++) {
       addP({ kind: 'star', x: p.x, y: p.y - 22, vx: rand(-160, 160), vy: rand(-220, -40), g: 400, life: 0.6, size: 5, rot: rand(0, TAU), vr: 9, color: '#ffe9a8' });
     }
+    if (isRocketMode()) { rsEnd = 'miss'; recordRocket(); return; }
     if (mode === 'online') { netReportDeath(elapsed); return; }
     if (mode === 'hard') hardLv = hardLevel();
     const rec = save.bests[stageNo];
@@ -1106,7 +1162,8 @@
   }
 
   function drawBackground(g) {
-    if (curStage.theme.bg === 'castle') drawBackgroundCastle(g);
+    if (curStage.theme.bg === 'aurora') drawBackgroundAurora(g);
+    else if (curStage.theme.bg === 'castle') drawBackgroundCastle(g);
     else drawBackgroundRuins(g);
   }
 
@@ -1382,7 +1439,10 @@
     const depth = computeDepth();
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
-        if (map[r][c] === '#') drawStone(g, c, r, depth[r][c]);
+        if (map[r][c] === '#') {
+          if (curStage.theme.snow) drawSnowStone(g, c, r, depth[r][c]);
+          else drawStone(g, c, r, depth[r][c]);
+        }
       }
     }
     for (let r = 0; r < ROWS; r++) {
@@ -1391,6 +1451,7 @@
         else if (map[r][c] === 'B') drawSafeBlock(g, c, r);
       }
     }
+    for (const cn of curStage.cannons || []) drawCannon(g, cn);
     // 周辺減光
     const gr = g.createRadialGradient(LW / 2, LH * 0.45, LH * 0.35, LW / 2, LH * 0.45, LW * 0.72);
     gr.addColorStop(0, 'rgba(0,0,0,0)');
@@ -1577,6 +1638,7 @@
   }
 
   function drawSafeGlow(g, t) {
+    if (tileAt(curStage.safe[0], curStage.safe[1]) !== 'B') return; // 安全ブロックがないステージ
     const x = curStage.safe[0] * TILE + 16, y = curStage.safe[1] * TILE + 16;
     const k = 0.5 + 0.5 * Math.sin(t * 3);
     g.save();
@@ -1982,6 +2044,16 @@
           g.fillRect(-q.size / 2, -q.size / 4, q.size, q.size / 2);
           g.restore();
           break;
+        case 'text':
+          g.globalAlpha = Math.min(1, a * 1.6);
+          g.font = '800 13px "M PLUS Rounded 1c", sans-serif';
+          g.textAlign = 'center';
+          g.lineWidth = 3;
+          g.strokeStyle = 'rgba(10,12,30,.85)';
+          g.strokeText(q.text, q.x, q.y);
+          g.fillStyle = q.color || '#fff';
+          g.fillText(q.text, q.x, q.y);
+          break;
         case 'line':
           g.globalAlpha = a * 0.6;
           g.strokeStyle = '#dfe8ff';
@@ -2020,21 +2092,22 @@
   const remainBox = $('hud-remain');
   const watchBox = $('hud-watch');
   // ストップウォッチのプレートをメダルの色に変える
-  function setMedal(lv, effect) {
+  function setMedal(lv, effect, list) {
+    const ML = list || MEDALS;
     medalNow = lv;
     for (const m of MEDALS) watchBox.classList.remove('medal-' + m.key);
-    if (lv > 0) watchBox.classList.add('medal-' + MEDALS[lv - 1].key);
+    if (lv > 0) watchBox.classList.add('medal-' + ML[lv - 1].key);
     if (effect && lv > 0) {
       watchBox.classList.remove('medal-up');
       void watchBox.offsetWidth;
       watchBox.classList.add('medal-up');
-      sfx(lv >= MEDALS.length ? 'medalTop' : 'medal');
+      sfx(lv >= ML.length ? 'medalTop' : 'medal');
     }
   }
   const bannerEl = $('banner');
   const soundBtn = $('btn-sound');
-  const overlays = [$('ov-title'), $('ov-pause'), $('ov-result'), $('ov-settings'), $('ov-help'), $('ov-online')];
-  let overlayId = 'ov-title';
+  const overlays = [$('ov-home'), $('ov-games'), $('ov-rocket'), $('ov-title'), $('ov-pause'), $('ov-result'), $('ov-settings'), $('ov-help'), $('ov-online')];
+  let overlayId = 'ov-home';
 
   function showOverlay(id) {
     for (const el of overlays) el.classList.toggle('show', el.id === id);
@@ -2100,8 +2173,11 @@
     switch (id) {
       case 'ov-title': {
         const m = save.lastMode === 'hard' && !save.hardUnlocked ? 'normal' : save.lastMode;
-        return document.querySelector(`.mode-btn[data-mode="${m}"]`);
+        return document.querySelector(`#ov-title .mode-btn[data-mode="${m}"]`);
       }
+      case 'ov-home': return $('btn-home-modes');
+      case 'ov-games': return $(game === 'rocket' ? 'btn-game-rocket' : 'btn-game-blaze');
+      case 'ov-rocket': return document.querySelector(`.rs-mode-btn[data-mode="${save.rsLast}"]`);
       case 'ov-pause': return $('btn-resume');
       case 'ov-result': return $('btn-retry');
       case 'ov-settings': return $('set-pad');
@@ -2145,6 +2221,9 @@
     else if (overlayId === 'ov-pause') togglePause(false);
     else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) toTitleAction();
     else if (overlayId === 'ov-online' && $('on-room').hidden) closeOnlineMenu();
+    else if (overlayId === 'ov-games') showHome();
+    else if (overlayId === 'ov-rocket') showOverlay('ov-games');
+    else if (overlayId === 'ov-title' && !logoBusy) showOverlay('ov-games');
   }
   function menuGamepad(gp) {
     const aEdge = gp.a && !gpMenu.a;
@@ -2203,8 +2282,8 @@
 
   // タイトルのモードボタン用
   function bestText(m) {
-    const b = save.bests[stageNo][m] || 0;
-    const cl = save.clears[stageNo];
+    const b = save.bests[save.stage][m] || 0;
+    const cl = save.clears[save.stage];
     if (m === 'normal' && cl > 0) return `クリア ${cl} 回`;
     return b > 0 ? `ベスト ${b.toFixed(2)} 秒` : 'まだ記録なし';
   }
@@ -2220,7 +2299,7 @@
   function updateTitleBests() {
     for (const m of ['normal', 'endless', 'hard']) $('best-' + m).textContent = bestText(m);
     // ノーマルはこのステージで取った最高のメダルを表示
-    const ml = medalLevel(save.bests[stageNo].normal || 0);
+    const ml = medalLevel(save.bests[save.stage].normal || 0);
     if (ml) {
       const dot = document.createElement('span');
       dot.className = 'medal-dot medal-' + MEDALS[ml - 1].key;
@@ -2228,17 +2307,20 @@
       $('best-normal').prepend(dot);
     }
     // ハードモードはノーマルを1回クリアするまで「？？？」
-    const hb = document.querySelector('.mode-btn[data-mode="hard"]');
+    const hb = document.querySelector('#ov-title .mode-btn[data-mode="hard"]');
     const locked = !save.hardUnlocked;
     hb.classList.toggle('locked', locked);
     hb.setAttribute('aria-disabled', locked ? 'true' : 'false');
     hb.querySelector('.m-name').textContent = locked ? '？？？' : 'ハードモード';
     hb.querySelector('.m-sub').textContent = locked ? '？？？' : '∞ 15秒ごとにレベルアップ';
     $('best-hard').hidden = locked;
-    document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('last', b.dataset.mode === save.lastMode));
+    document.querySelectorAll('#ov-title .mode-btn').forEach((b) => b.classList.toggle('last', b.dataset.mode === save.lastMode));
   }
   function updateModeHud() {
     remainBox.classList.toggle('is-online', mode === 'online');
+    watchBox.classList.toggle('is-rocket', isRocketMode());
+    remainBox.classList.toggle('is-rs-endless', mode === 'rs-endless');
+    lastWatch = '';
     remainBox.classList.toggle('is-endless', mode === 'endless');
     remainBox.classList.toggle('is-hard', mode === 'hard');
     lastRemain = '';
@@ -2248,22 +2330,41 @@
     soundBtn.textContent = save.muted ? '🔇' : '🔊';
   }
 
+  // 今のゲームのメニュー画面へ（BLAZE DODGE / ROCKET STREAK）
   function showTitle() {
     paused = false;
     AudioSys.setPaused(false);
     AudioSys.stopBgm();
+    const want = game === 'rocket' ? 3 : save.stage;
+    if (stageNo !== want) { buildMap(want); layout(); }
+    if (game === 'rocket' && !isRocketMode()) mode = 'rs-' + save.rsLast;
+    if (game !== 'rocket' && isRocketMode()) mode = save.lastMode;
+    updateModeHud();
     resetWorld();
     state = 'title';
     banner('', '');
     updateTitleBests();
-    showOverlay('ov-title');
+    updateRocketBests();
+    showOverlay(game === 'rocket' ? 'ov-rocket' : 'ov-title');
+  }
+  // ゲームを選ぶ
+  function enterGame(g) {
+    game = g === 'rocket' ? 'rocket' : 'blaze';
+    if (save.game !== game) { save.game = game; persist(); }
+    showTitle();
+  }
+  function showHome() {
+    showOverlay('ov-home');
   }
 
   function startGame(m) {
     if (logoBusy) return; // ステージ2解放の演出中は開始しない
-    if (m === 'normal' || m === 'endless' || m === 'hard' || m === 'online') mode = m;
+    if (['normal', 'endless', 'hard', 'online', 'rs-normal', 'rs-endless'].includes(m)) mode = m;
     if (mode === 'hard' && !save.hardUnlocked) mode = 'normal';
-    if (mode !== 'online' && save.lastMode !== mode) { save.lastMode = mode; persist(); }
+    if (isRocketMode()) {
+      const k = mode === 'rs-normal' ? 'normal' : 'endless';
+      if (save.rsLast !== k) { save.rsLast = k; persist(); }
+    } else if (mode !== 'online' && save.lastMode !== mode) { save.lastMode = mode; persist(); }
     updateModeHud();
     AudioSys.init();
     paused = false;
@@ -2321,6 +2422,7 @@
   }
 
   function showResult(cleared) {
+    $('res-unit').textContent = '秒';
     $('res-rank').hidden = true;
     $('res-best').parentElement.hidden = false;
     $('btn-retry').textContent = 'もう一度';
@@ -2374,7 +2476,9 @@
   }
 
   function onMenuConfirm() {
-    if (overlayId === 'ov-title') startGame(save.lastMode === 'hard' && !save.hardUnlocked ? 'normal' : save.lastMode);
+    if (overlayId === 'ov-home') showOverlay('ov-games');
+    else if (overlayId === 'ov-rocket') startGame('rs-' + save.rsLast);
+    else if (overlayId === 'ov-title') startGame(save.lastMode === 'hard' && !save.hardUnlocked ? 'normal' : save.lastMode);
     else if (overlayId === 'ov-result' && performance.now() - resultAt > 700) retryAction();
     else if (overlayId === 'ov-pause') togglePause(false);
   }
@@ -2397,7 +2501,7 @@
   }
 
   // ボタン
-  document.querySelectorAll('.mode-btn').forEach((b) => {
+  document.querySelectorAll('#ov-title .mode-btn').forEach((b) => {
     b.addEventListener('click', () => {
       AudioSys.init();
       if (b.classList.contains('locked')) {
@@ -2422,6 +2526,15 @@
     if (mode === 'online') leaveOnline(true);
     else showTitle();
   }
+  $('btn-home-modes').addEventListener('click', () => { AudioSys.init(); showOverlay('ov-games'); });
+  $('btn-game-blaze').addEventListener('click', () => { AudioSys.init(); enterGame('blaze'); });
+  $('btn-game-rocket').addEventListener('click', () => { AudioSys.init(); enterGame('rocket'); });
+  $('btn-games-back').addEventListener('click', showHome);
+  $('btn-blaze-back').addEventListener('click', () => { if (!logoBusy) showOverlay('ov-games'); });
+  $('btn-rocket-back').addEventListener('click', () => showOverlay('ov-games'));
+  document.querySelectorAll('.rs-mode-btn').forEach((b) => {
+    b.addEventListener('click', () => { AudioSys.init(); startGame('rs-' + b.dataset.mode); });
+  });
   $('btn-retry').addEventListener('click', () => { AudioSys.init(); retryAction(); });
   $('btn-r-title').addEventListener('click', toTitleAction);
   $('btn-resume').addEventListener('click', () => togglePause(false));
@@ -2603,14 +2716,14 @@
     // データ初期化はタイトルから開いたときだけ（プレイ中の記録が消えないように）
     disarmDataReset();
     const dr = $('btn-data-reset');
-    dr.disabled = settingsFrom !== 'ov-title';
+    dr.disabled = settingsFrom !== 'ov-home';
     dr.textContent = dr.disabled ? 'データ初期化はタイトルから' : 'データを初期化';
     $('set-note').textContent = isTouch
       ? 'タッチ操作ボタンの見た目と位置を調整できます。位置は縦画面・横画面で別々に保存されます。'
       : 'スマホ・タブレットで表示されるタッチ操作ボタンの設定です。位置の調整はタッチ操作の端末で行えます。';
   }
   function openSettings() {
-    if (overlayId !== 'ov-title' && overlayId !== 'ov-pause') return;
+    if (!['ov-home', 'ov-title', 'ov-rocket', 'ov-pause'].includes(overlayId)) return;
     settingsFrom = overlayId;
     syncSettingsUI();
     document.body.classList.add('settings-open');
@@ -2636,7 +2749,7 @@
     if (overlayId === 'ov-help') fitOverlay();
   }
   function openHelp() {
-    if (overlayId !== 'ov-title' && overlayId !== 'ov-pause') return;
+    if (!['ov-home', 'ov-title', 'ov-rocket', 'ov-pause'].includes(overlayId)) return;
     settingsFrom = overlayId;
     selectHelpTab(defaultHelpTab());
     showOverlay('ov-help');
@@ -2659,12 +2772,11 @@
     el.classList.add(cls);
   }
   function updateLogo() {
-    const two = stageNo === 2;
+    const two = save.stage === 2;
     logoMark.textContent = two ? '2' : '🔥';
     logoMark.classList.toggle('is-two', two);
     logoMark.setAttribute('aria-label', two ? 'ステージを切り替える（現在：2）' : 'ステージを切り替える');
-    document.title = `BLAZE DODGE ${two ? '2' : '🔥'} | made by hiro`;
-    $('mission-enemy').textContent = curStage.enemyText;
+    $('mission-enemy').textContent = STAGES[save.stage].enemyText;
   }
   function switchStage(n, quiet) {
     save.stage = n;
@@ -2805,22 +2917,26 @@
     save.padSwap = false;
     save.netName = '';
     save.lastMode = 'normal';
+    save.rsBest = { normal: 0, endless: 0 };
+    save.rsLast = 'normal';
     save.ctl = defaultCtl();
     mode = 'normal';
     flameTaps = 0;
     AudioSys.setMuted(false);
     updateSoundBtn();
     updateModeHud();
-    if (stageNo !== 1) { buildMap(1); layout(); resetWorld(); }
+    if (game === 'blaze' && stageNo !== 1) { buildMap(1); layout(); resetWorld(); }
+    if (game === 'rocket') mode = 'rs-normal';
     logoMark.style.removeProperty('--heat');
     updateLogo();
     updateTitleBests();
+    updateRocketBests();
     syncSettingsUI();
     applyControlSettings();
   }
   $('btn-data-reset').addEventListener('click', () => {
     const b = $('btn-data-reset');
-    if (b.disabled || settingsFrom !== 'ov-title') return;
+    if (b.disabled || settingsFrom !== 'ov-home') return;
     if (!b.classList.contains('armed')) {
       b.classList.add('armed');
       b.textContent = '本当に消す？ もう一度押す';
@@ -2894,6 +3010,489 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && (state === 'play' || state === 'ready') && !paused) togglePause(true);
   });
+
+  /* ===== ROCKET STREAK：飛んでくるロケットを着地せずに踏み続けて1UPを集める ===== */
+  const RS = {
+    TIME: 100,                // ノーマルの制限時間
+    SPEED: 140,               // ロケットの速さ
+    RW: 40, RH: 20,           // ロケットの当たり判定
+    INT_MIN: 1.5, INT_MAX: 3.3, // 砲台の発射間隔
+    BOUNCE: 560,              // 踏んだときの跳ね返り（ボタンを押していないとき）
+    BOUNCE_HI: 640,           // ジャンプボタンを押しているとき
+    POINTS: [100, 200, 400, 800, 1000, 2000, 4000, 8000] // 9回目からは踏むたびに1UP
+  };
+  // ノーマルのメダル（1UPの数）
+  const RS_MEDALS = [
+    { t: 1, key: 'bronze', name: '銅メダル' },
+    { t: 20, key: 'silver', name: '銀メダル' },
+    { t: 60, key: 'gold', name: '金メダル' }
+  ];
+  const rsMedalLevel = (ups) => RS_MEDALS.reduce((lv, m, i) => (ups >= m.t ? i + 1 : lv), 0);
+  let rockets = [];
+  let cannons = [];
+  let rsChain = 0;   // 連続で踏んだ回数（着地すると終了なので、1回のプレイ中ずっと続く）
+  let rsStomps = 0;
+  let ups = 0;
+  let rsArmed = false; // 一度でも地面を離れたか（離れたあとに着地したら終了）
+  let rsEnd = '';      // 'time' / 'land' / 'miss'
+  let rocketSeq = 0;
+
+  function resetRocketWorld() {
+    rockets = [];
+    cannons = (curStage.cannons || []).map((cn) => ({ ...cn, t: cn.delay, flash: 0 }));
+    rsChain = 0;
+    rsStomps = 0;
+    ups = 0;
+    rsArmed = false;
+    rsEnd = '';
+  }
+  function fireRocket(cn) {
+    const x = cn.dir > 0 ? (cn.c + 1) * TILE + 14 : cn.c * TILE - 14;
+    const y = cn.r * TILE + 12;
+    // 前のロケットがまだ砲台の前にいたら撃たない
+    for (const r of rockets) if (!r.dead && r.dir === cn.dir && Math.abs(r.x - x) < RS.RW * 1.6 && Math.abs(r.y - y) < RS.RH) return false;
+    rockets.push({ id: ++rocketSeq, x, y, dir: cn.dir, dead: false, vy: 0, rot: 0, shiftT: 0, shiftV: 0, bumpCD: 0, trailT: 0 });
+    cn.flash = 0.18;
+    sfx('launch');
+    for (let i = 0; i < 6; i++) {
+      addP({ kind: 'puff', x: x - cn.dir * 6, y: y + rand(-4, 4), vx: cn.dir * rand(20, 70), vy: rand(-30, 10), drag: 3, life: rand(0.3, 0.5), size: rand(3, 5) });
+    }
+    return true;
+  }
+  function explodeRocket(r) {
+    r.gone = true;
+    puff(r.x, r.y, 6);
+    sparks(r.x, r.y, 10, '#ffb43a', 160);
+    sfx('fizz');
+  }
+  function updateRocketWorld(dt, canFire) {
+    if (canFire) {
+      for (const cn of cannons) {
+        cn.t -= dt;
+        if (cn.t <= 0) {
+          fireRocket(cn);
+          cn.t = rand(RS.INT_MIN, RS.INT_MAX);
+        }
+      }
+    }
+    for (const cn of cannons) cn.flash = Math.max(0, cn.flash - dt);
+    for (const r of rockets) {
+      if (r.dead) {
+        // 踏まれたロケットは回りながら落ちていく
+        r.vy += 900 * dt;
+        r.y += r.vy * dt;
+        r.x += r.dir * 40 * dt;
+        r.rot += dt * 6 * r.dir;
+        if (r.y > LH + 60) r.gone = true;
+        continue;
+      }
+      r.x += r.dir * RS.SPEED * dt;
+      if (r.shiftT > 0) { r.y += r.shiftV * dt; r.shiftT -= dt; }
+      r.bumpCD = Math.max(0, r.bumpCD - dt);
+      r.trailT -= dt;
+      if (r.trailT <= 0) {
+        r.trailT = 0.04;
+        addP({ kind: 'spark', x: r.x - r.dir * 26, y: r.y + rand(-3, 3), vx: -r.dir * rand(40, 90), vy: rand(-15, 15), drag: 2, life: rand(0.18, 0.3), size: rand(2, 3.5), color: Math.random() < 0.5 ? '#ffb43a' : '#ff6a2a' });
+      }
+      // 地形にぶつかったら爆発、画面の外に出たら消える
+      const fc = Math.floor((r.x + r.dir * RS.RW / 2) / TILE);
+      if (r.y > 0 && r.y < LH && solidAt(fc, Math.floor(r.y / TILE))) explodeRocket(r);
+      else if (r.x < -80 || r.x > LW + 80) r.gone = true;
+    }
+    // ロケット同士が正面からぶつかったら、火花を出して上下にずれる
+    for (let i = 0; i < rockets.length; i++) {
+      const a = rockets[i];
+      if (a.dead || a.gone || a.bumpCD > 0) continue;
+      for (let j = i + 1; j < rockets.length; j++) {
+        const b = rockets[j];
+        if (b.dead || b.gone || b.bumpCD > 0 || a.dir === b.dir) continue;
+        if (Math.abs(a.x - b.x) < RS.RW * 0.95 && Math.abs(a.y - b.y) < RS.RH * 0.9) {
+          const up = a.y < b.y || (a.y === b.y && a.id < b.id) ? a : b;
+          const dn = up === a ? b : a;
+          up.shiftT = dn.shiftT = 0.2;
+          up.shiftV = -RS.RH * 0.75 / 0.2;
+          dn.shiftV = RS.RH * 0.75 / 0.2;
+          a.bumpCD = b.bumpCD = 0.6;
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          sparks(mx, my, 12, '#ffe27a', 220);
+          for (let k = 0; k < 4; k++) {
+            addP({ kind: 'star', x: mx, y: my, vx: rand(-120, 120), vy: rand(-140, 60), g: 300, life: 0.45, size: 5, rot: rand(0, TAU), vr: 8, color: '#fff3a8' });
+          }
+          sfx('clank');
+          break;
+        }
+      }
+    }
+    rockets = rockets.filter((r) => !r.gone);
+  }
+  // プレイヤーとロケットの当たり判定（上から踏めば得点、それ以外はミス）
+  function rocketHazards(p, l, rgt, t, b) {
+    for (const r of rockets) {
+      if (r.dead) continue;
+      const rl = r.x - RS.RW / 2, rr = r.x + RS.RW / 2, rt = r.y - RS.RH / 2, rb = r.y + RS.RH / 2;
+      if (!(rgt > rl && l < rr && b > rt && t < rb)) continue;
+      const prevBottom = p.y - p.vy * STEP;
+      if (p.vy > 0 && prevBottom <= rt + 10) { stompRocket(r); return false; }
+      return true; // ミス
+    }
+    return false;
+  }
+  function stompRocket(r) {
+    const p = player;
+    r.dead = true;
+    r.vy = -80;
+    p.y = r.y - RS.RH / 2;
+    p.vy = -(input.jump ? RS.BOUNCE_HI : RS.BOUNCE);
+    p.jumpHeld = input.jump;
+    p.onGround = false;
+    p.gp = 0; p.hoverT = 0; p.recoverT = 0; p.spinCool = 0; p.spinJump = false; p.spinT = 0;
+    p.squash = 1.2;
+    rsChain++;
+    rsStomps++;
+    puff(r.x, r.y, 4);
+    for (let k = 0; k < 4; k++) {
+      addP({ kind: 'star', x: r.x, y: r.y - 6, vx: rand(-100, 100), vy: rand(-160, -40), g: 400, life: 0.4, size: 4, rot: rand(0, TAU), vr: 8, color: '#fff3a8' });
+    }
+    if (rsChain <= RS.POINTS.length) {
+      addP({ kind: 'text', text: String(RS.POINTS[rsChain - 1]), x: r.x, y: r.y - 18, vy: -50, life: 0.8, color: '#ffffff' });
+      sfx('stomp');
+    } else {
+      ups++;
+      addP({ kind: 'text', text: '1UP', x: r.x, y: r.y - 18, vy: -55, life: 0.9, color: '#7dff8a' });
+      sfx('oneup');
+      if (mode === 'rs-normal') {
+        const lv = rsMedalLevel(ups);
+        if (lv > medalNow) setMedal(lv, true, RS_MEDALS);
+      }
+    }
+  }
+  function finishRocket(reason) {
+    if (state !== 'play') return;
+    rsEnd = reason;
+    state = 'finish';
+    stateT = 0;
+    AudioSys.stopBgm();
+    sfx(reason === 'time' ? 'clear' : 'finish');
+    banner(reason === 'time' ? 'TIME UP!' : 'FINISH!', 'clear');
+    recordRocket();
+  }
+  function recordRocket() {
+    const key = mode === 'rs-normal' ? 'normal' : 'endless';
+    lastNew = ups > (save.rsBest[key] || 0);
+    if (lastNew) { save.rsBest[key] = ups; persist(); }
+  }
+  function rsBestText(key) {
+    const b = save.rsBest[key] || 0;
+    return b > 0 ? `ベスト ${b} UP` : 'まだ記録なし';
+  }
+  function updateRocketBests() {
+    for (const key of ['normal', 'endless']) {
+      const el = $('rs-best-' + key);
+      el.textContent = rsBestText(key);
+      if (key === 'normal') {
+        const lv = rsMedalLevel(save.rsBest.normal || 0);
+        if (lv) {
+          const dot = document.createElement('span');
+          dot.className = 'medal-dot medal-' + RS_MEDALS[lv - 1].key;
+          dot.title = RS_MEDALS[lv - 1].name;
+          el.prepend(dot);
+        }
+      }
+    }
+    document.querySelectorAll('.rs-mode-btn').forEach((b) => b.classList.toggle('last', b.dataset.mode === save.rsLast));
+  }
+  function showRocketResult(reason) {
+    resultShown = true;
+    resultAt = performance.now();
+    const title = $('res-title');
+    title.textContent = reason === 'time' ? 'TIME UP!' : reason === 'land' ? 'FINISH!' : 'MISS…';
+    title.className = 'res-title ' + (reason === 'miss' ? 'miss' : 'clear');
+    $('res-time').textContent = String(ups);
+    $('res-unit').textContent = 'UP';
+    $('res-new').hidden = !lastNew;
+    $('res-unlock').hidden = true;
+    $('res-rank').hidden = true;
+    $('res-best').parentElement.hidden = false;
+    const rm = $('res-medal');
+    const lv = mode === 'rs-normal' ? rsMedalLevel(ups) : 0;
+    rm.hidden = lv === 0;
+    if (lv) {
+      rm.className = 'res-medal medal-' + RS_MEDALS[lv - 1].key;
+      $('res-medal-name').textContent = RS_MEDALS[lv - 1].name + ' 獲得！';
+    }
+    $('res-mode').textContent = 'ROCKET STREAK ' + (mode === 'rs-normal' ? 'ノーマル' : 'エンドレス');
+    const why = reason === 'land' ? '着地したので終了' : reason === 'miss' ? 'ロケットに当たってしまった' : '時間切れ';
+    $('res-msg').textContent = `${rsStomps}回踏んだ（${why}・${elapsed.toFixed(1)}秒）`;
+    $('res-best').textContent = save.rsBest[mode === 'rs-normal' ? 'normal' : 'endless'] + ' UP';
+    $('btn-retry').textContent = 'もう一度';
+    $('btn-r-title').textContent = 'メニューへ戻る';
+    showOverlay('ov-result');
+  }
+
+  // ---- 描画 ----
+  function drawRocket(g, r) {
+    g.save();
+    g.translate(r.x, r.y);
+    if (r.dead) g.rotate(r.rot);
+    g.scale(r.dir, 1); // 右向きで描いて反転
+    if (!r.dead) {
+      // 噴射の炎
+      const fl = 1 + Math.sin(performance.now() * 0.05 + r.id) * 0.15;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      const fg = g.createRadialGradient(-26, 0, 0, -26, 0, 16 * fl);
+      fg.addColorStop(0, 'rgba(255,240,180,.95)');
+      fg.addColorStop(0.4, 'rgba(255,150,50,.75)');
+      fg.addColorStop(1, 'rgba(255,80,20,0)');
+      g.fillStyle = fg;
+      ell(g, -28, 0, 16 * fl, 7);
+      g.restore();
+    }
+    // 尾翼
+    g.fillStyle = '#d6332c';
+    g.beginPath(); g.moveTo(-17, -8); g.lineTo(-25, -16); g.lineTo(-9, -8); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(-17, 8); g.lineTo(-25, 16); g.lineTo(-9, 8); g.closePath(); g.fill();
+    // 胴体
+    const bg = g.createLinearGradient(0, -10, 0, 10);
+    bg.addColorStop(0, '#ffffff');
+    bg.addColorStop(0.55, '#d4dcec');
+    bg.addColorStop(1, '#8e9ab4');
+    g.fillStyle = bg;
+    rrect(g, -20, -10, 32, 20, 8); g.fill();
+    // 赤いライン
+    g.fillStyle = '#e2453c';
+    g.fillRect(-11, -10, 4, 20);
+    // 先端
+    const ng = g.createLinearGradient(0, -10, 0, 10);
+    ng.addColorStop(0, '#ff7a6a');
+    ng.addColorStop(1, '#b51f24');
+    g.fillStyle = ng;
+    g.beginPath(); g.moveTo(10, -10); g.quadraticCurveTo(26, -7, 26, 0); g.quadraticCurveTo(26, 7, 10, 10); g.closePath(); g.fill();
+    // 丸窓
+    g.fillStyle = '#2b3a5c';
+    circ(g, 2, -1, 5.2);
+    g.fillStyle = '#7cc8ff';
+    circ(g, 2, -1, 4);
+    g.fillStyle = 'rgba(255,255,255,.85)';
+    circ(g, 0.8, -2.4, 1.3);
+    g.restore();
+  }
+  function drawRockets(g) {
+    for (const r of rockets) drawRocket(g, r);
+  }
+  function drawCannonFlash(g) {
+    for (const cn of cannons) {
+      if (cn.flash <= 0) continue;
+      const x = cn.dir > 0 ? (cn.c + 1) * TILE + 4 : cn.c * TILE - 4, y = cn.r * TILE + 12;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.globalAlpha = cn.flash / 0.18;
+      const fg = g.createRadialGradient(x, y, 0, x, y, 18);
+      fg.addColorStop(0, 'rgba(255,240,190,.9)');
+      fg.addColorStop(1, 'rgba(255,140,40,0)');
+      g.fillStyle = fg;
+      circ(g, x, y, 18);
+      g.restore();
+    }
+  }
+  // 砲台（静的な絵として地形と一緒に描く）
+  function drawCannon(g, cn) {
+    const x = cn.c * TILE, y = cn.r * TILE, d = cn.dir;
+    // 台座
+    let gr = g.createLinearGradient(x, 0, x + TILE, 0);
+    gr.addColorStop(0, '#2a3146');
+    gr.addColorStop(0.45, '#4c5674');
+    gr.addColorStop(1, '#1d2232');
+    g.fillStyle = gr;
+    rrect(g, x + 2, y + TILE + 2, TILE - 4, TILE - 2, 4); g.fill();
+    g.fillStyle = '#ffd84a';
+    drawStar(g, x + 16, y + TILE + 17, 8, -Math.PI / 2);
+    // 黄黒の注意帯
+    g.save();
+    g.beginPath(); g.rect(x + 2, y + TILE + 2, TILE - 4, 5); g.clip();
+    for (let i = -2; i < 8; i++) {
+      g.fillStyle = i % 2 ? '#1a1a1a' : '#f2c230';
+      g.beginPath();
+      g.moveTo(x + i * 6, y + TILE + 7); g.lineTo(x + i * 6 + 6, y + TILE + 2); g.lineTo(x + i * 6 + 12, y + TILE + 2); g.lineTo(x + i * 6 + 6, y + TILE + 7);
+      g.closePath(); g.fill();
+    }
+    g.restore();
+    // 砲身
+    gr = g.createLinearGradient(0, y + 3, 0, y + TILE);
+    gr.addColorStop(0, '#7b88a8');
+    gr.addColorStop(0.5, '#454f6a');
+    gr.addColorStop(1, '#232838');
+    g.fillStyle = gr;
+    rrect(g, x + 1, y + 3, TILE - 2, TILE - 3, 7); g.fill();
+    g.fillStyle = 'rgba(255,255,255,.25)';
+    g.fillRect(x + 6, y + 6, TILE - 12, 2);
+    // 発射口（向いている側）
+    const mx = d > 0 ? x + TILE - 1 : x + 1;
+    g.fillStyle = '#9aa6c4';
+    ell(g, mx, y + 15, 5, 12);
+    g.fillStyle = '#0c0f18';
+    ell(g, mx, y + 15, 3, 9);
+    // リベット
+    g.fillStyle = '#c3cbe0';
+    for (const rx of [x + 7, x + TILE - 7]) circ(g, rx, y + TILE - 6, 1.6);
+  }
+  // 降る雪
+  function drawSnowfall(g, t) {
+    g.save();
+    g.fillStyle = 'rgba(255,255,255,.75)';
+    for (let i = 0; i < 46; i++) {
+      const sp = 18 + (i % 7) * 5;
+      const x = ((i * 97.3 + Math.sin(t * 0.7 + i) * 18 + t * 8) % (LW + 20) + LW + 20) % (LW + 20) - 10;
+      const y = ((i * 53.1 + t * sp) % (LH + 20)) - 10;
+      circ(g, x, y, 0.8 + (i % 3) * 0.5);
+    }
+    g.restore();
+  }
+  // 背景：オーロラの夜と氷の山
+  function drawBackgroundAurora(g) {
+    const rnd = mulberry32(71733);
+    let gr = g.createLinearGradient(0, 0, 0, LH);
+    gr.addColorStop(0, '#0b0f3a');
+    gr.addColorStop(0.45, '#16247a');
+    gr.addColorStop(0.72, '#0f5f8f');
+    gr.addColorStop(1, '#0a3b5a');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, LW, LH);
+    // 星
+    for (let i = 0; i < 170; i++) {
+      g.fillStyle = `rgba(255,255,255,${(0.25 + rnd() * 0.6).toFixed(2)})`;
+      circ(g, rnd() * LW, rnd() * LH * 0.75, rnd() < 0.08 ? 1.6 : 0.8);
+    }
+    // オーロラ
+    g.save();
+    g.globalCompositeOperation = 'lighter';
+    const bands = [
+      { y0: 40, amp: 34, h: 260, c: '140,90,255', ph: 0.4 },
+      { y0: 120, amp: 26, h: 230, c: '70,170,255', ph: 1.9 },
+      { y0: 210, amp: 22, h: 190, c: '40,235,220', ph: 3.1 }
+    ];
+    for (const bd of bands) {
+      for (let x = 0; x < LW; x += 6) {
+        const top = bd.y0 + Math.sin(x * 0.007 + bd.ph) * bd.amp + Math.sin(x * 0.023 + bd.ph * 2) * bd.amp * 0.35;
+        const a = 0.12 + 0.1 * (0.5 + 0.5 * Math.sin(x * 0.05 + bd.ph * 3));
+        const lg = g.createLinearGradient(0, top, 0, top + bd.h);
+        lg.addColorStop(0, `rgba(${bd.c},0)`);
+        lg.addColorStop(0.15, `rgba(${bd.c},${a.toFixed(3)})`);
+        lg.addColorStop(1, `rgba(${bd.c},0)`);
+        g.fillStyle = lg;
+        g.fillRect(x, top, 6, bd.h);
+      }
+    }
+    g.restore();
+    // 三日月（オフスクリーンで欠けさせてから描く）
+    const mc = document.createElement('canvas');
+    mc.width = mc.height = 256;
+    const mg = mc.getContext('2d');
+    if (mg) {
+      const glow = mg.createRadialGradient(128, 128, 60, 128, 128, 128);
+      glow.addColorStop(0, 'rgba(160,240,230,.35)');
+      glow.addColorStop(1, 'rgba(160,240,230,0)');
+      mg.fillStyle = glow;
+      mg.fillRect(0, 0, 256, 256);
+      const mgr = mg.createLinearGradient(40, 40, 200, 200);
+      mgr.addColorStop(0, '#e3fffb');
+      mgr.addColorStop(1, '#78c9c4');
+      mg.fillStyle = mgr;
+      mg.beginPath(); mg.arc(128, 128, 78, 0, TAU); mg.fill();
+      mg.globalCompositeOperation = 'destination-out';
+      mg.beginPath(); mg.arc(158, 100, 74, 0, TAU); mg.fill();
+      g.drawImage(mc, 830, 60, 150, 150);
+    }
+    // 遠くの山
+    g.fillStyle = 'rgba(20,40,90,.85)';
+    g.beginPath();
+    g.moveTo(0, 470);
+    for (let x = 0; x <= LW; x += 40) g.lineTo(x, 400 + Math.sin(x * 0.012) * 26 + rnd() * 18);
+    g.lineTo(LW, LH); g.lineTo(0, LH); g.closePath(); g.fill();
+    // 中央の氷の山
+    const cx = LW / 2;
+    const facets = [
+      [[cx - 40, 240], [cx + 10, 260], [cx - 10, LH], [cx - 120, LH]],
+      [[cx + 10, 260], [cx + 40, 250], [cx + 130, LH], [cx - 10, LH]],
+      [[cx - 40, 240], [cx - 10, 230], [cx + 10, 260]],
+      [[cx - 70, 380], [cx - 20, 330], [cx - 40, LH], [cx - 160, LH]]
+    ];
+    const fcols = ['#1f4f8f', '#163a6e', '#5fa8e0', '#2a63a8'];
+    facets.forEach((f, i) => {
+      g.fillStyle = fcols[i];
+      g.beginPath();
+      f.forEach(([px, py], k) => (k ? g.lineTo(px, py) : g.moveTo(px, py)));
+      g.closePath(); g.fill();
+    });
+    g.strokeStyle = 'rgba(190,235,255,.35)';
+    g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(cx - 40, 240); g.lineTo(cx - 10, LH); g.moveTo(cx + 10, 260); g.lineTo(cx + 60, 420); g.stroke();
+    // 地平線の光
+    gr = g.createLinearGradient(0, 380, 0, 520);
+    gr.addColorStop(0, 'rgba(80,230,255,0)');
+    gr.addColorStop(1, 'rgba(80,230,255,.16)');
+    g.fillStyle = gr;
+    g.fillRect(0, 380, LW, 140);
+    // 左の足場の上の雪だまり
+    for (const [mx, rx, ry] of [[70, 62, 20], [150, 72, 26]]) {
+      const sg = g.createLinearGradient(0, 384 - ry, 0, 384);
+      sg.addColorStop(0, '#f4f9ff');
+      sg.addColorStop(1, '#a9c7f0');
+      g.fillStyle = sg;
+      ell(g, mx, 384, rx, ry);
+    }
+  }
+  // 雪の足場（ラベンダー色の地層＋雪のふち）
+  function drawSnowStone(g, c, r, d) {
+    const x = c * TILE, y = r * TILE;
+    const h = hash2(c, r);
+    const LK = [1, 1, 0.86, 0.74, 0.64];
+    const lk = d < LK.length ? LK[d] : 0.64;
+    g.fillStyle = `hsl(${(276 + h * 8).toFixed(1)},${(16 + h * 6).toFixed(1)}%,${((60 + h * 4) * lk).toFixed(1)}%)`;
+    g.fillRect(x, y, TILE, TILE);
+    for (let k = 0; k < 3; k++) {
+      const yy = y + 6 + k * 11;
+      g.strokeStyle = `rgba(110,70,135,${(0.3 * lk).toFixed(3)})`;
+      g.lineWidth = 2;
+      g.beginPath();
+      for (let xx = 0; xx <= TILE; xx += 4) {
+        const wy = yy + Math.sin((x + xx) * 0.22 + r * 1.3 + k) * 1.8;
+        if (xx === 0) g.moveTo(x + xx, wy); else g.lineTo(x + xx, wy);
+      }
+      g.stroke();
+      g.strokeStyle = `rgba(255,235,255,${(0.14 * lk).toFixed(3)})`;
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let xx = 0; xx <= TILE; xx += 4) {
+        const wy = yy + 3 + Math.sin((x + xx) * 0.22 + r * 1.3 + k) * 1.8;
+        if (xx === 0) g.moveTo(x + xx, wy); else g.lineTo(x + xx, wy);
+      }
+      g.stroke();
+    }
+    if (d !== 1) return;
+    const up = r > 0 ? map[r - 1][c] : '#';
+    const lf = c > 0 ? map[r][c - 1] : '#';
+    const rt = c < COLS - 1 ? map[r][c + 1] : '#';
+    if (lf === '.') { g.fillStyle = 'rgba(220,235,255,.18)'; g.fillRect(x, y, 3, TILE); }
+    if (rt === '.') { g.fillStyle = 'rgba(220,235,255,.18)'; g.fillRect(x + TILE - 3, y, 3, TILE); }
+    if (up === '.') {
+      // 雪のふち（むき出しの角は少しはみ出す）
+      const ox0 = lf === '.' ? -4 : 0, ox1 = rt === '.' ? 4 : 0;
+      const sg = g.createLinearGradient(0, y - 3, 0, y + 11);
+      sg.addColorStop(0, '#ffffff');
+      sg.addColorStop(1, '#cfe0fb');
+      g.fillStyle = sg;
+      rrect(g, x + ox0, y - 3, TILE - ox0 + ox1, 12, 5); g.fill();
+      const rr2 = mulberry32((c * 131 + r * 977) | 0);
+      for (let i = 0; i < 2; i++) {
+        const dx = x + 5 + rr2() * 22, rad = 3 + rr2() * 3;
+        g.beginPath(); g.arc(dx, y + 9, rad, 0, Math.PI); g.fill();
+      }
+      g.fillStyle = 'rgba(120,150,210,.35)';
+      g.fillRect(x, y + 9, TILE, 1.5);
+    }
+  }
+
 
   /* ===== オンライン対戦（部屋コード方式・ほかの人はゴースト表示） ===== */
   const NET = {
@@ -3511,7 +4110,8 @@
     let code = '';
     try { code = cleanCode(new URLSearchParams(location.search).get('room')); } catch (e) { return; }
     try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* 消せなくても問題なし */ }
-    if (code.length !== 4 || overlayId !== 'ov-title') return;
+    if (code.length !== 4 || overlayId !== 'ov-home') return;
+    enterGame('blaze');
     openOnline();
     $('on-code').value = code;
     if (!save.netName) $('on-name').value = 'ゲスト' + (10 + Math.floor(Math.random() * 90));
@@ -3660,7 +4260,8 @@
         break;
       case 'ready':
         updatePlayer(dt);
-        updateImps(dt);
+        if (isRocketMode()) updateRocketWorld(dt, false);
+        else updateImps(dt);
         updateParticles(dt);
         if (stateT >= 1.4) {
           state = 'play';
@@ -3673,11 +4274,21 @@
       case 'play': {
         elapsed += dt;
         if (mode === 'normal' && elapsed >= TIME_LIMIT) { clearGame(); break; }
+        if (mode === 'rs-normal' && elapsed >= RS.TIME) { elapsed = RS.TIME; finishRocket('time'); break; }
+        if (isRocketMode()) updateRocketWorld(dt, true);
         updatePlayer(dt);
-        if (state !== 'play') break; // このステップでミスした
+        if (isRocketMode() && state === 'play' && !player.onGround) rsArmed = true;
+        if (state !== 'play') { updateParticles(dt); break; } // このステップでミス・終了した
         updateImps(dt);
         updateFireballs(dt);
         updateParticles(dt);
+        if (mode === 'rs-normal') {
+          const sec = Math.ceil(RS.TIME - elapsed);
+          if (sec !== lastSec) {
+            if (sec <= 10 && sec > 0) sfx(sec <= 3 ? 'tickHi' : 'tick');
+            lastSec = sec;
+          }
+        }
         if (mode === 'normal') {
           const ml = medalLevel(elapsed);
           if (ml > medalNow) setMedal(ml, true);
@@ -3705,7 +4316,16 @@
           updateImps(dt);
           updateFireballs(dt);
           if (stateT > 2.4) { state = 'spectate'; stateT = 0; banner('観戦中', 'spect'); }
-        } else if (stateT > 2.4 && !resultShown) showResult(false);
+        } else if (stateT > 2.4 && !resultShown) {
+          if (isRocketMode()) showRocketResult('miss');
+          else showResult(false);
+        }
+        break;
+      case 'finish': // ROCKET STREAK：着地・時間切れ
+        updatePlayer(dt);
+        updateRocketWorld(dt, false);
+        updateParticles(dt);
+        if (stateT > 2 && !resultShown) showRocketResult(rsEnd);
         break;
       case 'spectate':
         elapsed += dt;
@@ -3734,16 +4354,18 @@
   let lastWatch = '', lastRemain = '', lastWarn = false;
   function render(time) {
     // HUD
-    const w = elapsed.toFixed(2);
+    const w = isRocketMode() ? `${ups} UP` : elapsed.toFixed(2);
     if (w !== lastWatch) { watchEl.textContent = w; lastWatch = w; }
     const rem = Math.max(0, Math.ceil(TIME_LIMIT - elapsed - 1e-6));
     let rs;
-    if (mode === 'online') rs = `残り${net.aliveCount}人`;
+    if (mode === 'rs-normal') rs = String(Math.max(0, Math.ceil(RS.TIME - elapsed - 1e-6))).padStart(3, '0');
+    else if (mode === 'rs-endless') rs = '∞';
+    else if (mode === 'online') rs = `残り${net.aliveCount}人`;
     else if (mode === 'endless') rs = '∞';
     else if (mode === 'hard') rs = 'Lv.' + (state === 'play' ? hardLevel() : hardLv);
     else rs = String(rem).padStart(3, '0');
     if (rs !== lastRemain) { remainEl.textContent = rs; lastRemain = rs; }
-    const warn = mode === 'normal' && state === 'play' && rem <= 10;
+    const warn = state === 'play' && ((mode === 'normal' && rem <= 10) || (mode === 'rs-normal' && RS.TIME - elapsed <= 10));
     if (warn !== lastWarn) { remainBox.classList.toggle('warn', warn); lastWarn = warn; }
 
     // キャンバス
@@ -3758,9 +4380,11 @@
     for (const m of imps) drawImp(ctx, m, time);
     if (mode === 'online' && net.inGame) drawGhosts(ctx, time);
     drawFireballs(ctx);
+    if (curStage.cannons) { drawCannonFlash(ctx); drawRockets(ctx); }
     drawPlayer(ctx, time);
     drawParticles(ctx);
     drawLights(ctx);
+    if (curStage.theme.snow) drawSnowfall(ctx, time);
   }
 
   let last = performance.now();
@@ -3781,7 +4405,7 @@
       acc = 0;
     }
     render(now / 1000);
-    const fast = state === 'play' && (mode === 'normal' ? TIME_LIMIT - elapsed <= 10 : mode === 'hard' && hardLevel() >= 6);
+    const fast = state === 'play' && (mode === 'normal' ? TIME_LIMIT - elapsed <= 10 : mode === 'rs-normal' ? RS.TIME - elapsed <= 10 : mode === 'hard' && hardLevel() >= 6);
     if (!paused) AudioSys.schedule(fast);
   }
 
@@ -3791,6 +4415,7 @@
   updateModeHud();
   updateLogo();
   updateTitleBests();
+  updateRocketBests();
   layout();
   requestAnimationFrame((t) => { last = t; frame(t); });
   setTimeout(handleInviteLink, 300);

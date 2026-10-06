@@ -876,6 +876,53 @@ body.portrait #ov-settings .card { transform-origin: top center; }
   .overlay.show, .res-new, #hud-remain.warn { animation: none; }
 }
 
+/* ===== Action Master：最初の画面・モード選択 ===== */
+.home-logo .en {
+  background: linear-gradient(180deg, #ffffff 0%, #9fe8ff 45%, #4f7dff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 3px 0 #10204f) drop-shadow(0 0 18px rgba(90, 160, 255, 0.45));
+}
+.home-logo .jp { color: #cfe4ff; }
+.home-btns { margin-top: 18px; }
+.home-btns .btn { width: min(260px, 100%); }
+.rocket-logo .en {
+  background: linear-gradient(180deg, #ffffff 0%, #ffd2c8 40%, #ff5a4a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 3px 0 #4a0f12) drop-shadow(0 0 18px rgba(255, 110, 90, 0.4));
+}
+.rocket-logo .jp { color: #ffd9d2; }
+.games { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.game-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px 16px;
+  border-radius: 18px;
+  text-align: center;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.game-card:active { transform: translateY(3px); }
+.game-card.blaze { background: linear-gradient(180deg, #ff9a4a, #c2361a); box-shadow: 0 5px 0 #5c1608, 0 12px 26px rgba(255, 110, 40, 0.3); }
+.game-card.rocket { background: linear-gradient(180deg, #5a8cff, #2a3f9f); box-shadow: 0 5px 0 #121c52, 0 12px 26px rgba(80, 130, 255, 0.3); }
+.g-name { font-size: 18px; font-weight: 800; letter-spacing: 0.06em; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.g-sub { font-size: 12px; line-height: 1.5; opacity: 0.92; }
+.modes.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 440px; }
+.rules { margin-bottom: 10px; font-size: 12.5px; line-height: 1.6; color: #e3e7fa; }
+.rules b { color: var(--fire); }
+#hud-watch.is-rocket .clock { display: none; }
+#hud-watch.is-rocket { padding-left: calc(var(--u) * 3); }
+@media (max-width: 520px) {
+  .games { grid-template-columns: 1fr; }
+  .modes.two { grid-template-columns: 1fr; }
+}
+
 /* ===== オンライン対戦 ===== */
 input[type="text"] {
   -webkit-user-select: text;
