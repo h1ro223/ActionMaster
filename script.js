@@ -36,7 +36,7 @@
   // プレイヤーの物理（単位：px, 秒）
   const PH = {
     W: 20, H: 40, CROUCH_H: 26,
-    WALK: 150, RUN: 285, // ダッシュは歩きの約1.9倍
+    WALK: 150, RUN: 300, // ダッシュは歩きの約1.9倍
     ACC: 820, ACC_RUN: 980, DEC: 950, SKID: 1900, ACC_AIR: 640, AIR_DRAG: 150,
     JUMP_V: 681, JUMP_RUN_BONUS: 0.22,
     G_UP: 1450, G_UP_RELEASE: 3600, G_DOWN: 2300, MAX_FALL: 640,
