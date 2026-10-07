@@ -407,6 +407,40 @@ body.touch.portrait #controls {
   font-size: calc(var(--bs) * 0.09);
   background: radial-gradient(circle at 40% 30%, #75e9dd, #1d8b80);
 }
+/* スマホアシスト：ボタンの当たり判定を見た目より広げる（JUMPとSPINの間は重ならないように少しだけ） */
+body.assist .cbtn::before {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+}
+body.assist #b-jump::before {
+  top: calc(var(--bs) * -0.1);
+  right: calc(var(--bs) * -0.1);
+  bottom: calc(var(--bs) * -0.1);
+  left: calc(var(--bs) * -0.04);
+}
+body.assist #b-spin::before {
+  top: calc(var(--bs) * -0.1);
+  right: calc(var(--bs) * -0.04);
+  bottom: calc(var(--bs) * -0.1);
+  left: calc(var(--bs) * -0.1);
+}
+/* スマホアシスト：空中スピンを受け付けていない間は SPIN を暗く、使えるときは JUMP のふちを光らせる */
+body.assist #controls.in-air.spin-wait #b-spin { filter: grayscale(0.7) brightness(0.62); }
+body.assist #controls.in-air:not(.spin-wait) #b-jump {
+  border-color: rgba(140, 245, 232, 0.95);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.2), 0 0 0 3px rgba(117, 233, 221, 0.55), 0 6px 14px rgba(0, 0, 0, 0.45);
+}
+body.assist #controls.spin-ready #b-spin,
+body.assist #controls.spin-ready #b-jump { animation: spin-ready 0.28s ease-out; }
+@keyframes spin-ready {
+  0% { filter: brightness(1.9); }
+  100% { filter: brightness(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body.assist #controls.spin-ready #b-spin,
+  body.assist #controls.spin-ready #b-jump { animation: none; }
+}
 /* 横に大きくずらしてダッシュ中 */
 #dpad.dash #dpad-knob {
   background: radial-gradient(circle at 40% 35%, #ffe789, #d79a12);

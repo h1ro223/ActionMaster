@@ -247,7 +247,7 @@
             <tr><th>壁キック</th><td>壁に向かってパッドを倒しながら JUMP</td></tr>
             <tr><th>❚❚</th><td>ポーズ</td></tr>
           </table>
-          <p class="note">横画面だと画面いっぱいで遊べます。ボタンの大きさや位置は「設定」で変えられます。</p>
+          <p class="note">横画面だと画面いっぱいで遊べます。ボタンの大きさや位置は「設定」で変えられます。「スマホアシスト」をONにすると、踏んだときは長押ししなくても最大ジャンプになり、空中スピンが使えるときはボタンが光ります。</p>
         </div>
 
         <div class="howto tab-panel" data-panel="pc" hidden>
@@ -309,6 +309,11 @@
             <input type="range" id="set-op" min="30" max="100" step="5">
             <output id="out-op">80%</output>
           </label>
+          <button id="set-assist" class="set-row set-toggle" type="button" role="switch" aria-checked="true">
+            <span class="set-label">スマホアシスト</span>
+            <span class="set-sub">タッチ操作中だけ：踏んだら最大ジャンプ／ジャンプが低くなりすぎない／スピンを受け付けやすく</span>
+            <span id="out-assist" class="toggle-pill">ON</span>
+          </button>
           <button id="set-swap" class="set-row set-toggle" type="button" role="switch" aria-checked="false">
             <span class="set-label">A/B・X/Y入れ替え</span>
             <span class="set-sub">Switch系のコントローラー向け</span>

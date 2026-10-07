@@ -36,7 +36,7 @@
   // プレイヤーの物理（単位：px, 秒）
   const PH = {
     W: 20, H: 40, CROUCH_H: 26,
-    WALK: 150, RUN: 300, // ダッシュは歩きの約1.9倍
+    WALK: 150, RUN: 300, // ダッシュは歩きの2倍
     ACC: 820, ACC_RUN: 980, DEC: 950, SKID: 1900, ACC_AIR: 640, AIR_DRAG: 150,
     JUMP_V: 681, JUMP_RUN_BONUS: 0.22,
     G_UP: 1450, G_UP_RELEASE: 3600, G_DOWN: 2300, MAX_FALL: 640,
@@ -47,7 +47,15 @@
     SPIN_CD: 0.12,
     GP_WAIT: 0.22, GP_V: 980, GP_ACC: 7000, GP_STUN: 0.2, // 急降下は一気に加速して最高速へ
     SPIN_ANIM: 0.32,  // 空中スピンの回転アニメ（1回転）の長さ
-    COYOTE: 0.08, JUMP_BUF: 0.12
+    COYOTE: 0.08, JUMP_BUF: 0.12,
+    STOMP_V: 746      // 敵・ロケットを踏んだときの跳ね返り：長押しで6マス、すぐ離すと約2.5マス
+  };
+  // スマホアシスト（設定でON・タッチ操作中だけ有効）
+  const ASSIST = {
+    JUMP_BUF: 0.2,   // 空中でのジャンプ入力の受付時間（通常0.12秒）
+    SPIN_BUF: 0.2,   // 空中でのスピン入力の受付時間（通常0.1秒）
+    REL_GRACE: 0.1,  // ジャンプを離してから上昇にブレーキがかかるまでの猶予（秒）
+    MIN_JUMP: 128    // ジャンプを早く離しても、最低この高さ（px・約4マス）は上がる
   };
 
   // 火の玉
@@ -260,6 +268,7 @@
     muted: false, lastMode: 'normal', ctl: defaultCtl(),
     padSwap: false,                              // コントローラーのA/B・X/Y入れ替え
     padAirSpin: true,                            // コントローラー：空中でジャンプボタン → 空中スピン
+    touchAssist: true,                           // スマホアシスト（タッチ操作中だけ効く）
     netName: '',                                 // オンライン対戦の名前
     game: 'blaze',                               // 最後に選んだゲーム（blaze / rocket）
     rsBest: { normal: 0, endless: 0 },           // ROCKET STREAKのベスト（1UPの数）
@@ -288,6 +297,7 @@
     if (typeof s.muted === 'boolean') save.muted = s.muted;
     if (typeof s.padSwap === 'boolean') save.padSwap = s.padSwap;
     if (typeof s.padAirSpin === 'boolean') save.padAirSpin = s.padAirSpin;
+    if (typeof s.touchAssist === 'boolean') save.touchAssist = s.touchAssist;
     if (s.game === 'rocket' || s.game === 'blaze') save.game = s.game;
     if (s.rsLast === 'normal' || s.rsLast === 'endless') save.rsLast = s.rsLast;
     if (s.rsBest && typeof s.rsBest === 'object') {
@@ -456,7 +466,10 @@
 
   /* ===== 6. 入力 ===== */
   const input = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
-  const buf = { jump: 0, spin: 0, down: 0, up: 0, jumpPad: false }; // jumpPad：今のジャンプ入力がコントローラーからか
+  const buf = { jump: 0, spin: 0, down: 0, up: 0, jumpPad: false, jumpAir: false, spinAir: false }; // jumpPad：今のジャンプ入力がコントローラーからか／○○Air：アシストで受付を延ばした入力か
+  // 最後に使った入力（'touch' / 'pad' / 'kb'）。タッチボタンの表示とスマホアシストの切り替えに使う
+  let lastInput = 'kb';
+  const assistActive = () => save.touchAssist && lastInput === 'touch';
   const kb = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
   const kbEdge = { left: false, right: false, up: false, down: false, jump: false, dash: false, spin: false };
   const tc = { left: false, right: false, up: false, down: false, jump: false, spin: false, dash: false };
@@ -507,12 +520,16 @@
       if (b(0) || b(1)) r.jump = true;
       if (b(2) || b(3) || b(4) || b(5) || b(6) || b(7)) r.spin = true; // X・Y・LB・RB・LT・RT
       if (b(9)) r.start = true;
+      // 実際に操作しているか（スティックのわずかなズレは無視）
+      if (Math.abs(ax) > 0.4 || Math.abs(ay) > 0.4) r.active = true;
+      for (let k = 0; k < gp.buttons.length && !r.active; k++) if (gp.buttons[k] && gp.buttons[k].pressed) r.active = true;
     }
     return r;
   }
 
   function pollInput() {
     const gp = pollGamepad();
+    if (gp.active) setLastInput('pad');
     const cur = {
       left: kb.left || tc.left || gp.left,
       right: kb.right || tc.right || gp.right,
@@ -526,11 +543,17 @@
     const padJumpEdge = gp.jump && !gpPrev.gameJump;
     const otherJumpEdge = kbEdge.jump || tcEdge.jump || ((kb.jump || tc.jump) && !input.jump);
     gpPrev.gameJump = gp.jump;
+    // スマホアシスト：空中での入力は少し長く受け付ける（着地したら通常の長さに戻す → onLand）
+    const airAssist = assistActive() && state === 'play' && player && !player.onGround && !player.dead;
     if (padJumpEdge || otherJumpEdge || (cur.jump && !input.jump)) {
-      buf.jump = PH.JUMP_BUF;
+      buf.jump = airAssist ? ASSIST.JUMP_BUF : PH.JUMP_BUF;
+      buf.jumpAir = airAssist;
       buf.jumpPad = padJumpEdge && !otherJumpEdge;
     }
-    if ((cur.spin && !input.spin) || kbEdge.spin || tcEdge.spin) buf.spin = 0.1;
+    if ((cur.spin && !input.spin) || kbEdge.spin || tcEdge.spin) {
+      buf.spin = airAssist ? ASSIST.SPIN_BUF : 0.1;
+      buf.spinAir = airAssist;
+    }
     if ((cur.down && !input.down) || kbEdge.down) buf.down = 0.1;
     if ((cur.up && !input.up) || kbEdge.up) buf.up = 0.05;
     for (const k in kbEdge) kbEdge[k] = false;
@@ -569,6 +592,7 @@
     return {
       x: curStage.safe[0] * TILE + 16, y: curStage.safe[1] * TILE, vx: 0, vy: 0, face: 1, h: PH.H,
       onGround: true, coyote: 0, jumpHeld: false, crouch: false,
+      autoHold: false, riseAssist: false, relGrace: 0, jumpY0: 0, // スマホアシスト用
       wallSide: 0, sliding: false, lockT: 0,
       spinT: 0, spinCD: 0, spinPhase: 0, spinJump: false,
       hoverT: 0, recoverT: 0, spinCool: 0,
@@ -616,6 +640,7 @@
     p.lockT = Math.max(0, p.lockT - dt);
     p.spinCD = Math.max(0, p.spinCD - dt);
     p.spinCool = Math.max(0, p.spinCool - dt);
+    p.relGrace = Math.max(0, p.relGrace - dt);
     if (p.spinT > 0) {
       p.spinT -= dt;
       p.spinPhase += dt * 28;
@@ -717,6 +742,7 @@
           p.vy = -(PH.JUMP_V + Math.abs(p.vx) * PH.JUMP_RUN_BONUS);
           p.onGround = false; p.coyote = 0; buf.jump = 0;
           p.jumpHeld = true; p.hoverT = 0; p.recoverT = 0; p.squash = 1.22;
+          p.jumpY0 = p.y; p.riseAssist = true; p.autoHold = false; p.relGrace = 0;
           sfx('jump');
           dust(p.x, p.y, 4);
         } else if (p.wallSide !== 0 && p.vy > -150) {
@@ -727,6 +753,7 @@
           p.spinT = 0; p.spinJump = false;
           p.spinCool = 0; p.hoverT = 0; p.recoverT = 0; // 壁キックで空中スピンのクールタイム解除
           p.jumpHeld = true; buf.jump = 0; p.squash = 1.2;
+          p.jumpY0 = p.y; p.riseAssist = true; p.autoHold = false; p.relGrace = 0;
           sfx('wallkick');
           sparks(p.x + s * PH.W / 2, p.y - p.h * 0.5, 8, '#cfe8ff', 160);
           dust(p.x + s * PH.W / 2, p.y - p.h * 0.4, 3);
@@ -736,7 +763,11 @@
           buf.spin = Math.max(buf.spin, 0.05);
         }
       }
-      if (!input.jump || !ctl) p.jumpHeld = false;
+      if (!input.jump || !ctl) {
+        // スマホアシスト：離してすぐはブレーキをかけない（押し離しのズレを許す）
+        if (p.jumpHeld && p.riseAssist && p.vy < 0 && assistActive()) p.relGrace = ASSIST.REL_GRACE;
+        p.jumpHeld = false;
+      }
 
       // --- スピン ---
       const canSpin = p.onGround ? p.spinCD <= 0 : p.spinCool <= 0 && !p.spinJump; // 地上スピンジャンプ中は空中スピン不可
@@ -766,8 +797,18 @@
       // --- 重力 ---
       let g, maxF = PH.MAX_FALL;
       if (p.spinJump) g = PH.G_UP; // 地上スピンジャンプは上昇も下降も同じ重力（ゆっくり落ちない）
-      else if (p.vy < 0) g = p.jumpHeld ? PH.G_UP : PH.G_UP_RELEASE;
-      else g = PH.G_DOWN;
+      else if (p.vy < 0) {
+        let hold = p.jumpHeld || p.autoHold; // autoHold：アシスト中に踏んだときは長押し扱い（必ず最大ジャンプ）
+        if (!hold && p.riseAssist && assistActive()) {
+          if (p.relGrace > 0) hold = true;
+          // ここでブレーキをかけても最低の高さに届かないなら、まだ上昇を続ける
+          else if ((p.jumpY0 - p.y) + (p.vy * p.vy) / (2 * PH.G_UP_RELEASE) < ASSIST.MIN_JUMP) hold = true;
+        }
+        g = hold ? PH.G_UP : PH.G_UP_RELEASE;
+      } else {
+        g = PH.G_DOWN;
+        p.autoHold = false; p.riseAssist = false;
+      }
       let hardCap = false;
       if (p.hoverT > 0) {
         // 空中スピン中：上昇はそのまま、落下速度だけ小さく抑える
@@ -868,6 +909,10 @@
     if (isRocketMode() && state === 'play' && rsStarted) finishRocket('land');
     p.spinT = 0; p.spinJump = false; p.sliding = false;
     p.spinCool = 0; p.hoverT = 0; p.recoverT = 0; p.spinAnim = 0;
+    p.autoHold = false; p.riseAssist = false; p.relGrace = 0;
+    // アシストで延ばした空中の入力は、着地したら通常の受付時間に戻す（着地直前の入力の扱いは今まで通り）
+    if (buf.jumpAir) { buf.jump = Math.max(0, buf.jump - (ASSIST.JUMP_BUF - PH.JUMP_BUF)); buf.jumpAir = false; }
+    if (buf.spinAir) { buf.spin = Math.max(0, buf.spin - (ASSIST.SPIN_BUF - 0.1)); buf.spinAir = false; }
     if (p.gp === 2) {
       p.gp = 3; p.gpT = PH.GP_STUN;
       p.squash = 0.6;
@@ -914,7 +959,9 @@
       if (r > ml && l < mr && b > mt && t < mb) {
         if (p.vy > 50 && p.y - p.vy * STEP <= mt + 10) {
           m.alive = false; m.vy = -380; m.vx = p.x < m.x ? 80 : -80;
-          p.vy = input.jump ? -600 : -420;
+          p.vy = -PH.STOMP_V; // ロケットを踏んだときと同じ跳ね返り（長押しで6マス）
+          p.jumpHeld = input.jump;
+          p.autoHold = assistActive(); p.riseAssist = false; p.relGrace = 0;
           p.gp = 0; p.spinCool = 0; p.hoverT = 0; p.recoverT = 0; p.spinJump = false; p.spinT = 0;
           sfx('stomp');
           puff(m.x, m.y - 20, 6);
@@ -2274,10 +2321,24 @@
     if (bEdge) gpBack();
   }
   // コントローラーがつながっている間はタッチボタンを隠す
+  // タッチボタンは「コントローラー接続中」かつ「最後の操作がタッチではない」ときだけ隠す
+  function updatePadOn() {
+    const on = padConnected && lastInput !== 'touch';
+    if (on === document.body.classList.contains('pad-on')) return;
+    document.body.classList.toggle('pad-on', on);
+    layout();
+  }
+  function setLastInput(t) {
+    if (t === lastInput) return;
+    lastInput = t;
+    updatePadOn();
+  }
   function setPadConnected(c) {
     if (c === padConnected) return;
     padConnected = c;
-    document.body.classList.toggle('pad-on', c);
+    if (c) lastInput = 'pad';
+    else if (lastInput === 'pad') lastInput = isTouch ? 'touch' : 'kb';
+    updatePadOn();
     layout();
     if (c && overlayId && !gpFocusEl) setGpFocus(defaultFocus(overlayId));
     if (!c) clearGpFocus();
@@ -2566,6 +2627,7 @@
     const k = KEYMAP[e.code];
     if (k) {
       e.preventDefault();
+      setLastInput('kb');
       kb[k] = true;
       if (!e.repeat) kbEdge[k] = true;
     }
@@ -2721,6 +2783,10 @@
     as.setAttribute('aria-checked', save.padAirSpin ? 'true' : 'false');
     as.classList.toggle('on', save.padAirSpin);
     $('out-padspin').textContent = save.padAirSpin ? 'ON' : 'OFF';
+    const sa = $('set-assist');
+    sa.setAttribute('aria-checked', save.touchAssist ? 'true' : 'false');
+    sa.classList.toggle('on', save.touchAssist);
+    $('out-assist').textContent = save.touchAssist ? 'ON' : 'OFF';
   }
   function syncSettingsUI() {
     syncSwapUI();
@@ -2920,6 +2986,13 @@
     sfx('ui');
   });
 
+  $('set-assist').addEventListener('click', () => {
+    save.touchAssist = !save.touchAssist;
+    persist();
+    syncSwapUI();
+    sfx('ui');
+  });
+
   // ===== データ初期化（2回押しで実行） =====
   let resetTimer = 0;
   function disarmDataReset() {
@@ -2939,6 +3012,7 @@
     save.muted = false;
     save.padSwap = false;
     save.padAirSpin = true;
+    save.touchAssist = true;
     save.netName = '';
     save.lastMode = 'normal';
     save.rsBest = { normal: 0, endless: 0 };
@@ -3044,7 +3118,7 @@
     STOMP_Y: 14,              // 踏みの判定：ロケットの上面からこの深さまでなら「上から踏んだ」扱い
     FIRST: 1.0,               // スタート（GO!）から最初の発射までの時間
     INTERVAL: 3.75,           // 発射の間隔（砲台ごとに数える）
-    BOUNCE: 746,              // 踏んだときの跳ね返り：長押しで6マス、すぐ離すと約2.5マス
+    BOUNCE: PH.STOMP_V,       // 踏んだときの跳ね返り（フレイムインプと共通。値は PH.STOMP_V）
     POINTS: [100, 200, 400, 800, 1000, 2000, 4000, 8000] // 9回目からは踏むたびに1UP
   };
   // ノーマルのメダル（1UPの数）
@@ -3198,6 +3272,7 @@
     p.vy = -RS.BOUNCE;
     rsStarted = true;
     p.jumpHeld = input.jump;
+    p.autoHold = assistActive(); p.riseAssist = false; p.relGrace = 0; // スマホアシスト：必ず最大ジャンプ
     p.onGround = false;
     p.gp = 0; p.hoverT = 0; p.recoverT = 0; p.spinCool = 0; p.spinJump = false; p.spinT = 0;
     p.squash = 1.2;
@@ -4302,7 +4377,9 @@
     window.visualViewport.addEventListener('scroll', applyPinchFix);
   }
 
+  if (isTouch) lastInput = 'touch';
   window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') setLastInput('touch'); // タッチしたらボタンを再表示
     if (e.pointerType === 'touch' && !isTouch) {
       isTouch = true;
       layout();
@@ -4458,6 +4535,31 @@
     if (curStage.theme.snow) drawSnowfall(ctx, time);
   }
 
+  // スマホアシスト：空中スピンを受け付けているかをボタンに表示（変わったときだけDOMを触る）
+  const assistUI = { on: null, air: false, wait: false };
+  function updateAssistUI() {
+    const on = assistActive();
+    if (on !== assistUI.on) { assistUI.on = on; document.body.classList.toggle('assist', on); }
+    const p = player;
+    const air = on && state === 'play' && !!p && !p.dead && !p.onGround;
+    const wait = air && (p.spinCool > 0 || p.spinJump || p.crouch || p.gp > 0);
+    if (air !== assistUI.air) {
+      assistUI.air = air;
+      controlsEl.classList.toggle('in-air', air);
+      if (!air) controlsEl.classList.remove('spin-ready');
+    }
+    if (wait !== assistUI.wait) {
+      const was = assistUI.wait;
+      assistUI.wait = wait;
+      controlsEl.classList.toggle('spin-wait', wait);
+      if (was && !wait && air) { // 使えるようになった瞬間に一瞬光らせる
+        controlsEl.classList.remove('spin-ready');
+        void controlsEl.offsetWidth;
+        controlsEl.classList.add('spin-ready');
+      }
+    }
+  }
+
   let last = performance.now();
   let acc = 0;
   function frame(now) {
@@ -4476,6 +4578,7 @@
       acc = 0;
     }
     render(now / 1000);
+    updateAssistUI();
     const fast = state === 'play' && (mode === 'normal' ? TIME_LIMIT - elapsed <= 10 : mode === 'rs-normal' ? RS.TIME - elapsed <= 10 : mode === 'hard' && hardLevel() >= 6);
     if (!paused) AudioSys.schedule(fast);
   }
