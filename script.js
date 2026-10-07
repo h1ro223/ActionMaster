@@ -2676,6 +2676,8 @@
     if (editMode) return;
     if (!paused) AudioSys.init();
     try { dpad.setPointerCapture(e.pointerId); } catch (err) { /* 非対応 */ }
+    // 指は1本だけ管理：iOSで「離した」が届かずに残った古い指（押しっぱなしの原因）を、触り直すたびに消す
+    dpadPointers.clear();
     dpadPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     dpadUpdate();
   });
@@ -2695,9 +2697,11 @@
   dpad.addEventListener('lostpointercapture', dpadEnd);
 
   // タッチ：右ボタン
+  const btnPointers = []; // 各ボタンを押している指（押しっぱなし対策でまとめて消せるように）
   document.querySelectorAll('.cbtn').forEach((btn) => {
     const k = btn.dataset.k;
     const ids = new Set();
+    btnPointers.push(ids);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       if (editMode) return;
@@ -2931,6 +2935,7 @@
   function releaseTouchInputs() {
     dpadPointers.clear();
     dpadUpdate();
+    for (const ids of btnPointers) ids.clear();
     tc.jump = tc.spin = false;
     document.querySelectorAll('.cbtn').forEach((b) => b.classList.remove('on'));
   }
@@ -3106,8 +3111,24 @@
 
   // タブ切り替えで自動ポーズ
   document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseTouchInputs();
     if (document.hidden && (state === 'play' || state === 'ready') && !paused) togglePause(true);
   });
+
+  // ===== タッチ入力の押しっぱなし対策 =====
+  // iOS Safari では長押し・スクショ・音量ボタン・画面端のスワイプなどで「指を離した」イベントが届かないことがあり、
+  // スティックやボタンが押されたまま固まる。次のタイミングで記録を全部消して自動で元に戻す。
+  // ① 画面から指が1本もなくなったとき
+  const touchAllUp = (e) => { if (!e.touches || e.touches.length === 0) releaseTouchInputs(); };
+  window.addEventListener('touchend', touchAllUp, true);
+  window.addEventListener('touchcancel', touchAllUp, true);
+  // ② 画面に指が1本もない状態から触ったとき（1本目の指）＝それより前の記録はすべて残りもの
+  window.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch' && e.isPrimary && !editMode) releaseTouchInputs();
+  }, true);
+  // ③ アプリの切り替え・通知・ページを離れたとき
+  window.addEventListener('blur', releaseTouchInputs);
+  window.addEventListener('pagehide', releaseTouchInputs);
 
   /* ===== ROCKET STREAK：飛んでくるロケットを着地せずに踏み続けて1UPを集める ===== */
   const RS = {
